@@ -243,7 +243,7 @@ func (c *localConfigurator) configureRegistryCert(hosts []net.IP) error {
 	}
 
 	var (
-		endpoint = net.JoinHostPort(c.Domain, strconv.Itoa(c.Port))
+		endpoint = c.Domain
 		caFile   = c.Domain + ".crt"
 		src      = filepath.Join(c.infraDriver.GetClusterRootfsPath(), "certs", caFile)
 		dest     = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
@@ -317,7 +317,7 @@ func (c *localConfigurator) configureDaemonService(hosts []net.IP) error {
 	var (
 		src      string
 		dest     string
-		endpoint = net.JoinHostPort(c.Domain, strconv.Itoa(c.Port))
+		endpoint = net.JoinHostPort(, strconv.Itoa(c.Port))
 	)
 
 	if endpoint == common.DefaultRegistryURL {
@@ -392,7 +392,8 @@ func (c *localConfigurator) configureDockerDaemonService(endpoint, daemonFile st
 func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlFile string) error {
 	var (
 		caFile             = c.Domain + ".crt"
-		registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
+		caDmain            = c.Domain
+		registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, caDmain, caFile)
 		url                = "https://" + endpoint
 	)
 
