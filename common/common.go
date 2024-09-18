@@ -46,7 +46,7 @@ const (
 	KubeLvsCareStaticPodName = "kube-lvscare"
 	RegLvsCareStaticPodName  = "reg-lvscare"
 	StaticPodDir             = "/etc/kubernetes/manifests"
-	LvsCareRepoAndTag        = "lvscare:latest"
+	LvsCareRepoAndTag        = "global/lvscare:latest"
 )
 
 // Envs
