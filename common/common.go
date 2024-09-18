@@ -86,9 +86,9 @@ const (
 // image module
 const (
 	DefaultMetadataName         = "Metadata"
-	DefaultRegistryDomain       = "mks.hub"
+	DefaultRegistryDomain       = "sea.hub"
 	DefaultRegistryPort         = 5000
-	DefaultRegistryURL          = "mks.hub:5000"
+	DefaultRegistryURL          = "sea.hub:5000"
 	DefaultRegistryHtPasswdFile = "registry_htpasswd"
 )
 
