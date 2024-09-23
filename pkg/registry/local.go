@@ -393,7 +393,7 @@ func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlF
 	var (
 		caFile             = c.Domain + ".crt"
 		registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
-		url                = "http://" + endpoint
+		url                = "https://" + endpoint
 	)
 
 	cfg := Hosts{
