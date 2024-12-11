@@ -253,7 +253,6 @@ require (
 	github.com/libp2p/go-tcp-transport v0.5.0 // indirect
 	github.com/libp2p/go-ws-transport v0.5.0 // indirect
 	github.com/libp2p/go-yamux/v2 v2.3.0 // indirect
-	github.com/libp2p/go-yamux/v3 v3.1.2 // indirect
 	github.com/libp2p/zeroconf/v2 v2.1.1 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/lithammer/dedent v1.1.0 // indirect
@@ -330,9 +329,9 @@ require (
 	github.com/subosito/gotenv v1.2.0 // indirect
 	github.com/sylabs/sif/v2 v2.7.1 // indirect
 	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
-	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
+	github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d // indirect
 	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
-	github.com/theupdateframework/go-tuf v0.3.1 // indirect
+	github.com/theupdateframework/go-tuf v0.3.2 // indirect
 	github.com/titanous/rocacheck v0.0.0-20171023193734-afe73141d399 // indirect
 	github.com/ulikunitz/xz v0.5.10 // indirect
 	github.com/vbatts/tar-split v0.11.2 // indirect
@@ -393,8 +392,15 @@ replace (
 	github.com/labring/lvscare => github.com/fanux/lvscare v1.1.3-beta.2.0.20220525083355-d8f3f86677d1
 	github.com/libp2p/go-libp2p => github.com/libp2p/go-libp2p v0.16.0
 	github.com/libp2p/go-libp2p-core => github.com/libp2p/go-libp2p-core v0.11.0
+	github.com/libp2p/go-libp2p-mplex => github.com/libp2p/go-libp2p-mplex v0.4.1
+	github.com/libp2p/go-libp2p-peerstore => github.com/libp2p/go-libp2p-peerstore v0.4.0
+	github.com/libp2p/go-libp2p-quic-transport => github.com/libp2p/go-libp2p-quic-transport v0.15.0
 	github.com/libp2p/go-libp2p-swarm => github.com/libp2p/go-libp2p-swarm v0.8.0
+	github.com/libp2p/go-libp2p-transport-upgrader => github.com/libp2p/go-libp2p-transport-upgrader v0.5.0
 	github.com/libp2p/go-libp2p-yamux => github.com/libp2p/go-libp2p-yamux v0.6.0
+	github.com/libp2p/go-mplex => github.com/libp2p/go-mplex v0.3.0
+	github.com/libp2p/go-tcp-transport => github.com/libp2p/go-tcp-transport v0.4.0
+	github.com/lucas-clemente/quic-go => github.com/lucas-clemente/quic-go v0.25.0
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.1.2
 	golang.org/x/net => golang.org/x/net v0.12.0
 	k8s.io/api => k8s.io/api v0.24.2
@@ -424,11 +430,4 @@ replace (
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.21.0
 	k8s.io/sample-cli-plugin => k8s.io/sample-cli-plugin v0.21.0
 	k8s.io/sample-controller => k8s.io/sample-controller v0.21.0
-	github.com/libp2p/go-libp2p-mplex => github.com/libp2p/go-libp2p-mplex v0.4.1
-	github.com/libp2p/go-libp2p-quic-transport => github.com/libp2p/go-libp2p-quic-transport v0.15.0
-	github.com/libp2p/go-libp2p-transport-upgrader => github.com/libp2p/go-libp2p-transport-upgrader v0.5.0
-	github.com/libp2p/go-tcp-transport => github.com/libp2p/go-tcp-transport v0.4.0
-	github.com/libp2p/go-libp2p-peerstore => github.com/libp2p/go-libp2p-peerstore v0.4.0
-	github.com/libp2p/go-mplex => github.com/libp2p/go-mplex v0.3.0
-	github.com/lucas-clemente/quic-go => github.com/lucas-clemente/quic-go v0.25.0
 )
