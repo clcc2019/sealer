@@ -187,7 +187,7 @@ func GetClientFromConfig(adminConfPath string) (runtimeClient.Client, error) {
 }
 
 func (k *Runtime) configureLvs(masterHosts, clientHosts []net.IP) error {
-	lvsImageURL := path.Join(common.LvsCareRepoAndTag)
+	lvsImageURL := path.Join(common.EnvExternalRegistryDomain, common.LvsCareRepoAndTag)
 
 	var rs []string
 	var realEndpoints []string

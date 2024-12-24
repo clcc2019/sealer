@@ -181,7 +181,7 @@ func (c *localConfigurator) configureLvs(registryHosts, clientHosts []net.IP) er
 	}
 
 	//todo should make lvs image name as const value in sealer repo.
-	lvsImageURL := path.Join(common.LvsCareRepoAndTag)
+	lvsImageURL := path.Join(common.EnvExternalRegistryDomain, common.LvsCareRepoAndTag)
 
 	vip := GetRegistryVIP(c.infraDriver)
 
@@ -424,8 +424,8 @@ type HostFileConfig struct {
 	// Accepted types
 	// - string - Single file with certificate(s)
 	// - []string - Multiple files with certificates
-	CACert interface{} `toml:"ca"`
-	SkipServerVerify bool `toml:"skip_verify"`
+	CACert           interface{} `toml:"ca"`
+	SkipServerVerify bool        `toml:"skip_verify"`
 }
 
 type DaemonConfig struct {
