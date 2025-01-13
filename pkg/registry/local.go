@@ -391,7 +391,7 @@ func (c *localConfigurator) configureDockerDaemonService(endpoint, daemonFile st
 
 func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlFile string) error {
 	var (
-		caFile             = c.Domain + ".crt"
+		// caFile             = c.Domain + ".crt"
 		// registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
 		url                = "http://" + endpoint
 	)
@@ -424,7 +424,7 @@ type HostFileConfig struct {
 	// Accepted types
 	// - string - Single file with certificate(s)
 	// - []string - Multiple files with certificates
-	CACert           interface{} `toml:"ca"`
+	// CACert           interface{} `toml:"ca"`
 	SkipServerVerify bool        `toml:"skip_verify"`
 }
 
