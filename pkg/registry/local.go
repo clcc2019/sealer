@@ -378,7 +378,7 @@ func (c *localConfigurator) configureDockerDaemonService(endpoint, daemonFile st
 		}
 	}
 
-	daemonConf.RegistryMirrors = append(daemonConf.RegistryMirrors, "https://"+endpoint)
+	daemonConf.RegistryMirrors = append(daemonConf.RegistryMirrors, "http://"+endpoint)
 
 	content, err := json.MarshalIndent(daemonConf, "", "  ")
 
@@ -393,7 +393,7 @@ func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlF
 	var (
 		caFile             = c.Domain + ".crt"
 		registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
-		url                = "https://" + endpoint
+		url                = "http://" + endpoint
 	)
 
 	cfg := Hosts{
