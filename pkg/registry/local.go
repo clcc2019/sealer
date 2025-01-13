@@ -181,7 +181,8 @@ func (c *localConfigurator) configureLvs(registryHosts, clientHosts []net.IP) er
 	}
 
 	//todo should make lvs image name as const value in sealer repo.
-	lvsImageURL := path.Join(common.EnvExternalRegistryDomain, common.LvsCareRepoAndTag)
+	endpoint := net.JoinHostPort(c.Domain, strconv.Itoa(c.Port), "/global")
+	lvsImageURL := path.Join(endpoint, common.LvsCareRepoAndTag)
 
 	vip := GetRegistryVIP(c.infraDriver)
 
