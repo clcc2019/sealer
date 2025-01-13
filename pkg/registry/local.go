@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -181,8 +180,7 @@ func (c *localConfigurator) configureLvs(registryHosts, clientHosts []net.IP) er
 	}
 
 	//todo should make lvs image name as const value in sealer repo.
-	endpoint := net.JoinHostPort(c.Domain, strconv.Itoa(c.Port))
-	lvsImageURL := path.Join(endpoint, common.LvsCareRepoAndTag)
+	lvsImageURL := common.LvsCareRepoAndTag
 
 	vip := GetRegistryVIP(c.infraDriver)
 
@@ -394,7 +392,7 @@ func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlF
 	var (
 		// caFile             = c.Domain + ".crt"
 		// registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
-		url                = "http://" + endpoint
+		url = "http://" + endpoint
 	)
 
 	cfg := Hosts{
@@ -426,7 +424,7 @@ type HostFileConfig struct {
 	// - string - Single file with certificate(s)
 	// - []string - Multiple files with certificates
 	// CACert           interface{} `toml:"ca"`
-	SkipServerVerify bool        `toml:"skip_verify"`
+	SkipServerVerify bool `toml:"skip_verify"`
 }
 
 type DaemonConfig struct {
