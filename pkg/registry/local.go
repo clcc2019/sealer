@@ -131,9 +131,9 @@ func (c *localConfigurator) InstallOn(masters, nodes []net.IP) error {
 		return err
 	}
 
-	if err := c.configureAccessCredential(hosts); err != nil {
-		return err
-	}
+	// if err := c.configureAccessCredential(hosts); err != nil {
+	// 	return err
+	// }
 
 	return nil
 }
@@ -399,7 +399,7 @@ func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlF
 	cfg := Hosts{
 		Server: url,
 		HostConfigs: map[string]HostFileConfig{
-			url: {CACert: registryCaCertPath, SkipServerVerify: true},
+			url: {SkipServerVerify: true},
 		},
 	}
 
