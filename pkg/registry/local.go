@@ -392,7 +392,7 @@ func (c *localConfigurator) configureDockerDaemonService(endpoint, daemonFile st
 func (c *localConfigurator) configureContainerdDaemonService(endpoint, hostTomlFile string) error {
 	var (
 		caFile             = c.Domain + ".crt"
-		registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
+		// registryCaCertPath = filepath.Join(c.containerRuntimeInfo.CertsDir, endpoint, caFile)
 		url                = "http://" + endpoint
 	)
 
