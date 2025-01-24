@@ -24,21 +24,21 @@ const (
 
 const (
 	DefaultKubeadmConfig = `
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   bindPort: 6443
 nodeRegistration:
-  criSocket: /var/run/dockershim.sock
+  criSocket: unix:///run/containerd/containerd.sock
 
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.19.8
+kubernetesVersion: v1.31.5
 imageRepository: sea.hub:5000
 networking:
-  podSubnet: 100.64.0.0/10
-  serviceSubnet: 10.96.0.0/22
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/16
 apiServer:
   extraArgs:
     audit-policy-file: "/etc/kubernetes/audit-policy.yml"
@@ -65,6 +65,7 @@ apiServer:
 controllerManager:
   extraArgs:
     cluster-signing-duration: 876000h
+    tls-cipher-suites: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
   extraVolumes:
     - hostPath: /etc/localtime
       mountPath: /etc/localtime
@@ -81,7 +82,8 @@ scheduler:
 etcd:
   local:
     extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381
+      tls-cipher-suites: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      listen-metrics-urls: http://127.0.0.1:2381
 
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
@@ -107,7 +109,7 @@ authorization:
   webhook:
     cacheAuthorizedTTL: 5m0s
     cacheUnauthorizedTTL: 30s
-cgroupDriver:
+cgroupDriver: systemd
 cgroupsPerQOS: true
 clusterDomain: cluster.local
 configMapAndSecretChangeDetectionStrategy: Watch
@@ -130,7 +132,7 @@ evictionHard:
   nodefs.available: 10%
   nodefs.inodesFree: 5%
 evictionPressureTransitionPeriod: 5m0s
-failSwapOn: true
+failSwapOn: false
 fileCheckFrequency: 20s
 hairpinMode: promiscuous-bridge
 healthzBindAddress: 127.0.0.1
@@ -141,11 +143,11 @@ imageGCLowThresholdPercent: 80
 imageMinimumGCAge: 2m0s
 iptablesDropBit: 15
 iptablesMasqueradeBit: 14
-kubeAPIBurst: 10
-kubeAPIQPS: 5
+kubeAPIBurst: 200
+kubeAPIQPS: 100
 makeIPTablesUtilChains: true
 maxOpenFiles: 1000000
-maxPods: 110
+maxPods: 256
 nodeLeaseDurationSeconds: 40
 nodeStatusReportFrequency: 10s
 nodeStatusUpdateFrequency: 10s
@@ -162,13 +164,13 @@ streamingConnectionIdleTimeout: 4h0m0s
 syncFrequency: 1m0s
 volumeStatsAggPeriod: 1m0s
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 caCertPath: /etc/kubernetes/pki/ca.crt
 discovery:
   timeout: 5m0s
 nodeRegistration:
-  criSocket: /var/run/dockershim.sock
+  criSocket: unix:///run/containerd/containerd.sock
 controlPlane:
   localAPIEndpoint:
     bindPort: 6443`

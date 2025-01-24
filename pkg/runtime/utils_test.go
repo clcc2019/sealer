@@ -55,7 +55,7 @@ func TestLoadMetadata(t *testing.T) {
 				[]byte(mockMetadata),
 			},
 			want: &Metadata{
-				Version:        "v1.19.8",
+				Version:        "v1.31.5",
 				Arch:           "amd64",
 				ClusterRuntime: ClusterRuntime(common.K8s),
 				NydusFlag:      false,
