@@ -137,11 +137,18 @@ func (i *Installer) Install() error {
 	var (
 		masters = i.infraDriver.GetHostIPListByRole(common.MASTER)
 		master0 = masters[0]
+		nodes   = i.infraDriver.GetHostIPListByRole(common.NODE)
+		node0  net.IP
 		workers = getWorkerIPList(i.infraDriver)
-		node0	= workers[0]
 		all     = append(masters, workers...)
 		rootfs  = i.infraDriver.GetClusterRootfsPath()
 	)
+	
+	if len(nodes) == 0 {
+		node0  = master0
+	} else {
+		node0  = nodes[0]
+	}
 
 	// set HostAlias
 	if err := i.infraDriver.SetClusterHostAliases(all); err != nil {
