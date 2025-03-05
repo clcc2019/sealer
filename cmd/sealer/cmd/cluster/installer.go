@@ -142,6 +142,11 @@ func (i AppInstaller) prepareMaterials(appImageName string, mode string, ignoreC
 	}
 
 	masters := i.infraDriver.GetHostIPListByRole(common.MASTER)
+
+	if len(masters) < 1 {
+		return fmt.Errorf("no deploy hosts found in the cluster")
+	}
+
 	regConfig := i.infraDriver.GetClusterRegistry()
 	// distribute rootfs
 
@@ -153,9 +158,21 @@ func (i AppInstaller) prepareMaterials(appImageName string, mode string, ignoreC
 	if regConfig.LocalRegistry == nil {
 		return nil
 	}
-	deployHosts := masters
+
+	deployHosts := i.infraDriver.GetHostIPListByRole(common.NODE)
+	
+	if len(deployHosts) < 1 {
+		deployHosts = i.infraDriver.GetHostIPListByRole(common.MASTER)
+	}
+
+	if len(deployHosts) < 1 {
+		return fmt.Errorf("no deploy hosts found in the cluster")
+	}
+
+	node0 := deployHosts[0]
+
 	if !*regConfig.LocalRegistry.HA {
-		deployHosts = []net.IP{masters[0]}
+		deployHosts = []net.IP{node0}
 	}
 
 	registryConfigurator, err := registry.NewConfigurator(deployHosts,
@@ -652,15 +669,21 @@ func loadToRegistry(infraDriver infradriver.InfraDriver, distributor imagedistri
 		return nil
 	}
 
-	deployHosts := infraDriver.GetHostIPListByRole(common.MASTER)
+	deployHosts := infraDriver.GetHostIPListByRole(common.NODE)
+
 	if len(deployHosts) < 1 {
-		return fmt.Errorf("local registry host can not be nil")
+		deployHosts = infraDriver.GetHostIPListByRole(common.MASTER)
 	}
-	master0 := deployHosts[0]
+	
+	if len(deployHosts) < 1 {
+		return fmt.Errorf("no deploy hosts found in the cluster")
+	}
+
+	node0 := deployHosts[0]
 
 	logrus.Infof("start to apply with mode(%s)", common.ApplyModeLoadImage)
 	if !*regConfig.LocalRegistry.HA {
-		deployHosts = []net.IP{master0}
+		deployHosts = []net.IP{node0}
 	}
 
 	if err := distributor.DistributeRegistry(deployHosts, filepath.Join(infraDriver.GetClusterRootfsPath(), "registry")); err != nil {

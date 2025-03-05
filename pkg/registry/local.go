@@ -146,11 +146,11 @@ func (c *localConfigurator) configureRegistryNetwork(masters, nodes []net.IP) er
 
 	eg, _ := errgroup.WithContext(context.Background())
 
-	for i := range masters {
-		master := masters[i]
+	for i := range nodes {
+		node := nodes[i]
 		eg.Go(func() error {
-			cmd := shellcommand.CommandSetHostAlias(c.Domain, master.String())
-			if err := c.infraDriver.CmdAsync(master, nil, cmd); err != nil {
+			cmd := shellcommand.CommandSetHostAlias(c.Domain, node.String())
+			if err := c.infraDriver.CmdAsync(node, nil, cmd); err != nil {
 				return fmt.Errorf("failed to config masters hosts file: %v", err)
 			}
 			return nil
