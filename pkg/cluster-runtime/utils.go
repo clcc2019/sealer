@@ -48,27 +48,41 @@ func getWorkerIPList(infraDriver infradriver.InfraDriver) []net.IP {
 // LoadToRegistry just load container image to local registry
 func LoadToRegistry(infraDriver infradriver.InfraDriver, distributor imagedistributor.Distributor) error {
 	regConfig := infraDriver.GetClusterRegistry()
-	// todo only support load image to local registry at present
+
+	// Check if local registry configuration exists
 	if regConfig.LocalRegistry == nil {
+		logrus.Warn("No local registry configured, skipping load.")
 		return nil
 	}
 
-	deployHosts := infraDriver.GetHostIPListByRole(common.MASTER)
+	// Get the list of hosts by role
+	deployHosts := infraDriver.GetHostIPListByRole(common.NODE)
+
 	if len(deployHosts) < 1 {
-		return fmt.Errorf("local registry host can not be nil")
+		deployHosts = infraDriver.GetHostIPListByRole(common.MASTER)
 	}
-	master0 := deployHosts[0]
 
-	logrus.Infof("start to apply with mode(%s)", common.ApplyModeLoadImage)
+	if len(deployHosts) < 1 {
+		return fmt.Errorf("no deploy hosts found in the cluster")
+	}
+
+	node01 := deployHosts[0]
+
+	logrus.Infof("Starting image load with mode: %s", common.ApplyModeLoadImage)
+
+	// If HA mode is not enabled, restrict to a single node (node01)
 	if !*regConfig.LocalRegistry.HA {
-		deployHosts = []net.IP{master0}
+		logrus.Infof("HA mode is not enabled, limiting image load to node: %s", node01)
+		deployHosts = []net.IP{node01}
 	}
 
+	// Distribute the image to the registry
 	if err := distributor.DistributeRegistry(deployHosts, filepath.Join(infraDriver.GetClusterRootfsPath(), "registry")); err != nil {
+		logrus.Errorf("Failed to distribute registry: %v", err)
 		return err
 	}
 
-	logrus.Infof("load image success")
+	logrus.Infof("Image loaded successfully")
 	return nil
 }
 
