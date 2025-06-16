@@ -37,17 +37,17 @@ build: clean
 ## linux: Build binaries for Linux
 linux: clean
 	@echo "Building sealer and seautil binaries for Linux (amd64)"
-	GOOS=$(GOOS) GOARCH=$(GOARCH) $(TOOLS_DIR) $(GIT_TAG)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(TOOLS_DIR) $(GIT_TAG)
 
 ## linux-amd64: Build binaries for Linux (amd64)
 linux-amd64: clean
 	@echo "Building sealer and seautil binaries for Linux (amd64)"
-	GOOS=linux GOARCH=amd64 $(TOOLS_DIR) $(GIT_TAG)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(TOOLS_DIR) $(GIT_TAG)
 
 ## linux-arm64: Build binaries for Linux (arm64)
 linux-arm64: clean
 	@echo "Building sealer and seautil binaries for Linux (arm64)"
-	GOOS=linux GOARCH=arm64 $(TOOLS_DIR) $(GIT_TAG)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(TOOLS_DIR) $(GIT_TAG)
 
 ## build-in-docker: sealer should be compiled in linux platform, otherwise there will be GraphDriver problem.
 build-in-docker:

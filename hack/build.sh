@@ -22,6 +22,7 @@
 
 
 export GO111MODULE=on
+export CGO_ENABLED=0
 set -x
 SEALER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export THIS_PLATFORM_BIN="${SEALER_ROOT}/_output/bin"
