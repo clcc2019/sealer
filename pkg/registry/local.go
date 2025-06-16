@@ -130,9 +130,9 @@ func (c *localConfigurator) InstallOn(masters, nodes []net.IP) error {
 		return err
 	}
 
-	// if err := c.configureAccessCredential(hosts); err != nil {
-	// 	return err
-	// }
+	if err := c.configureAccessCredential(hosts); err != nil {
+		return err
+	}
 
 	return nil
 }
