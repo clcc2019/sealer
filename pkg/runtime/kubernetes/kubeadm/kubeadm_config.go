@@ -59,11 +59,14 @@ const (
 	V1150 = "v1.15.0"
 	V1200 = "v1.20.0"
 	V1230 = "v1.23.0"
+	V1330 = "v1.33.0"
+	V1310 = "v1.31.0"
 
 	// kubeadm api version
 	KubeadmV1beta1 = "kubeadm.k8s.io/v1beta1"
 	KubeadmV1beta2 = "kubeadm.k8s.io/v1beta2"
 	KubeadmV1beta3 = "kubeadm.k8s.io/v1beta3"
+	KubeadmV1beta4 = "kubeadm.k8s.io/v1beta4"
 )
 
 // LoadFromClusterfile :Load KubeadmConfig from Clusterfile.
@@ -103,11 +106,17 @@ func (k *KubeadmConfig) setKubeadmAPIVersion() {
 	if err != nil {
 		logrus.Errorf("compare kubernetes version failed: %s", err)
 	}
+	greaterThanKV1310, err := kv.GreaterThan(V1310)
+	if err != nil {
+		logrus.Errorf("compare kubernetes version failed: %s", err)
+	}
 	switch {
-	case greaterThanKV1150 && !greaterThanKV1230:
-		k.setAPIVersion(KubeadmV1beta2)
+	case greaterThanKV1310:
+		k.setAPIVersion(KubeadmV1beta4)
 	case greaterThanKV1230:
 		k.setAPIVersion(KubeadmV1beta3)
+	case greaterThanKV1150:
+		k.setAPIVersion(KubeadmV1beta2)
 	default:
 		// Compatible with versions 1.14 and 1.13. but do not recommend.
 		k.setAPIVersion(KubeadmV1beta1)

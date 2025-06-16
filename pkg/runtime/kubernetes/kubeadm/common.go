@@ -20,21 +20,22 @@ const (
 	ClusterConfiguration   = "ClusterConfiguration"
 	KubeProxyConfiguration = "KubeProxyConfiguration"
 	KubeletConfiguration   = "KubeletConfiguration"
+	ResetConfiguration     = "ResetConfiguration"
 )
 
 const (
 	DefaultKubeadmConfig = `
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   bindPort: 6443
 nodeRegistration:
-  criSocket: /var/run/dockershim.sock
+  criSocket: unix:///var/lib/containerdv2/state/containerd.sock
 
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.19.8
+kubernetesVersion: v1.33.0
 imageRepository: sea.hub:5000
 networking:
   podSubnet: 100.64.0.0/10
@@ -130,7 +131,7 @@ evictionHard:
   nodefs.available: 10%
   nodefs.inodesFree: 5%
 evictionPressureTransitionPeriod: 5m0s
-failSwapOn: true
+failSwapOn: false
 fileCheckFrequency: 20s
 hairpinMode: promiscuous-bridge
 healthzBindAddress: 127.0.0.1
@@ -141,11 +142,11 @@ imageGCLowThresholdPercent: 80
 imageMinimumGCAge: 2m0s
 iptablesDropBit: 15
 iptablesMasqueradeBit: 14
-kubeAPIBurst: 10
-kubeAPIQPS: 5
+kubeAPIBurst: 50
+kubeAPIQPS: 20
 makeIPTablesUtilChains: true
 maxOpenFiles: 1000000
-maxPods: 110
+maxPods: 256
 nodeLeaseDurationSeconds: 40
 nodeStatusReportFrequency: 10s
 nodeStatusUpdateFrequency: 10s
@@ -162,14 +163,28 @@ streamingConnectionIdleTimeout: 4h0m0s
 syncFrequency: 1m0s
 volumeStatsAggPeriod: 1m0s
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 caCertPath: /etc/kubernetes/pki/ca.crt
 discovery:
   timeout: 5m0s
 nodeRegistration:
-  criSocket: /var/run/dockershim.sock
+  criSocket: unix:///var/lib/containerdv2/state/containerd.sock
 controlPlane:
   localAPIEndpoint:
-    bindPort: 6443`
+    bindPort: 6443
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ResetConfiguration
+certificatesDir: /etc/kubernetes/pki
+criSocket: unix:///var/lib/containerdv2/state/containerd.sock
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+`
 )

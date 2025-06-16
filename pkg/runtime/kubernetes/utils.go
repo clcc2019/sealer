@@ -64,7 +64,8 @@ rm -rf /usr/bin/kubeadm && rm -rf /usr/bin/kubelet-pre-start.sh && \
 rm -rf /usr/bin/kubelet && rm -rf /usr/bin/kubectl && \
 rm -rf /var/lib/kubelet/* && rm -rf /etc/sysctl.d/k8s.conf && \
 rm -rf /etc/cni && rm -rf /opt/cni && \
-rm -rf /var/lib/etcd/* && rm -rf /var/etcd/* && rm -rf /root/.kube/config
+rm -rf /var/lib/etcd/* && rm -rf /var/etcd/* && rm -rf /root/.kube/config && \
+if [ -f /etc/containerdv2/config.toml ]; then sed -i 's|/var/lib/containerdv2/state/containerd.sock|/var/run/containerdv2/containerd.sock|g' /etc/containerd/config.toml; fi
 `
 	RemoteRemoveAPIServerEtcHost = "echo \"$(sed \"/%s/d\" /etc/hosts)\" > /etc/hosts"
 	KubeDeleteNode               = "kubectl delete node %s"
