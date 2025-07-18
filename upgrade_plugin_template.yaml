@@ -1,0 +1,150 @@
+---
+# UPGRADE插件模板 - 用于在集群升级阶段在指定角色执行更新动作
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradePreparation
+spec:
+  type: SHELL                        # 使用SHELL类型执行升级前的准备命令
+  action: upgrade                    # 在升级阶段执行 (对应UpgradeCluster phase)
+  scope: master                      # 只在master节点执行
+  data: |
+    echo "开始升级前的准备工作..."
+    # 备份重要配置文件
+    mkdir -p /var/backup/upgrade-$(date +%Y%m%d-%H%M%S)
+    cp -r /etc/kubernetes /var/backup/upgrade-$(date +%Y%m%d-%H%M%S)/
+    
+    # 检查集群状态
+    kubectl get nodes
+    kubectl get pods -A --field-selector=status.phase!=Running
+    
+    # 创建升级检查点
+    echo "升级检查点: $(date)" > /var/log/upgrade-checkpoint.log
+    echo "升级前准备完成"
+
+---
+# UPGRADE插件模板 - 在master节点执行升级后的验证
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradeVerification
+spec:
+  type: SHELL
+  action: upgrade                    # 在升级阶段执行
+  scope: master                      # 只在master节点执行 (会在master0上运行)
+  data: |
+    echo "开始升级后的验证..."
+    
+    # 等待所有节点就绪
+    kubectl wait --for=condition=Ready nodes --all --timeout=300s
+    
+    # 检查关键系统组件
+    kubectl get pods -n kube-system
+    kubectl get componentstatuses
+    
+    # 验证API服务器
+    kubectl version --short
+    
+    # 记录升级完成状态
+    echo "升级验证完成: $(date)" >> /var/log/upgrade-checkpoint.log
+    echo "集群升级验证通过"
+
+---
+# UPGRADE插件模板 - 在worker节点执行升级相关任务
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradeWorkerNodes
+spec:
+  type: SHELL
+  action: upgrade-host               # 在升级主机阶段执行 (对应UpgradeHost phase)
+  scope: node                        # 只在worker节点执行
+  data: |
+    echo "开始worker节点升级任务..."
+    
+    # 清理旧的容器镜像缓存
+    docker system prune -f || containerd ctr images prune
+    
+    # 重启kubelet服务确保配置生效
+    systemctl restart kubelet
+    systemctl status kubelet
+    
+    # 等待节点重新加入集群
+    sleep 30
+    echo "Worker节点升级任务完成"
+
+---
+# UPGRADE插件模板 - 在所有节点执行升级前的通用准备
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradeAllNodes
+spec:
+  type: SHELL
+  action: upgrade-host               # 在升级主机阶段执行
+  scope: master|node                 # 在所有节点执行 (使用|分隔符指定多个角色)
+  data: |
+    echo "在所有节点执行升级准备..."
+    
+    # 更新系统时间同步
+    chrony sources -v || ntpdate -s time.nist.gov
+    
+    # 确保有足够的磁盘空间
+    df -h
+    
+    # 备份节点关键配置
+    mkdir -p /var/backup/node-config
+    cp /etc/hosts /var/backup/node-config/
+    cp /etc/systemd/system/kubelet.service.d/* /var/backup/node-config/ 2>/dev/null || true
+    
+    echo "节点升级准备完成"
+
+---
+# UPGRADE插件模板 - 使用HOSTNAME插件更新主机名 (如果需要)
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradeHostnames
+spec:
+  type: HOSTNAME
+  action: upgrade-host
+  data: |
+    192.168.0.2 k8s-master-01
+    192.168.0.3 k8s-master-02
+    192.168.0.4 k8s-master-03
+    192.168.0.5 k8s-worker-01
+    192.168.0.6 k8s-worker-02
+
+---
+# UPGRADE插件模板 - 使用LABEL插件更新节点标签
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: UpgradeNodeLabels
+spec:
+  type: LABEL
+  action: upgrade                    # 在升级阶段执行
+  data: |
+    192.168.0.2 upgraded=true,upgrade-date=2024-01-15
+    192.168.0.3 upgraded=true,upgrade-date=2024-01-15
+    192.168.0.4 upgraded=true,upgrade-date=2024-01-15
+    192.168.0.5 upgraded=true,upgrade-date=2024-01-15
+    192.168.0.6 upgraded=true,upgrade-date=2024-01-15
+
+---
+# 在Clusterfile中使用UPGRADE插件的完整示例
+apiVersion: sealer.io/v2
+kind: Cluster
+metadata:
+  name: my-kubernetes-cluster
+spec:
+  image: kubernetes:v1.32.0          # 升级到的目标版本
+  ssh:
+    passwd: your-password
+    user: root
+    port: "22"
+  hosts:
+    - ips: [ 192.168.0.2,192.168.0.3,192.168.0.4 ]
+      roles: [ master ]
+    - ips: [ 192.168.0.5,192.168.0.6 ]
+      roles: [ node ] 

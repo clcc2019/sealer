@@ -59,6 +59,7 @@ const (
 	V1150 = "v1.15.0"
 	V1200 = "v1.20.0"
 	V1230 = "v1.23.0"
+	V1320 = "v1.32.0"
 	V1330 = "v1.33.0"
 	V1310 = "v1.31.0"
 
@@ -110,7 +111,14 @@ func (k *KubeadmConfig) setKubeadmAPIVersion() {
 	if err != nil {
 		logrus.Errorf("compare kubernetes version failed: %s", err)
 	}
+	greaterThanKV1320, err := kv.GreaterThan(V1320)
+	if err != nil {
+		logrus.Errorf("compare kubernetes version failed: %s", err)
+	}
 	switch {
+	case greaterThanKV1320:
+		// Kubernetes 1.32 and above continue to use kubeadm.k8s.io/v1beta4
+		k.setAPIVersion(KubeadmV1beta4)
 	case greaterThanKV1310:
 		k.setAPIVersion(KubeadmV1beta4)
 	case greaterThanKV1230:
