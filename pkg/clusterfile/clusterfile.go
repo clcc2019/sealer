@@ -146,43 +146,16 @@ func (c *ClusterFile) SaveAll(opts SaveOptions) error {
 		}
 	}
 
-	if len(c.kubeadmConfig.InitConfiguration.TypeMeta.Kind) != 0 {
-		initConfiguration, err := yaml.Marshal(c.kubeadmConfig.InitConfiguration)
-		if err != nil {
-			return err
-		}
-		clusterfileBytes = append(clusterfileBytes, initConfiguration)
+	kubeadmConfigs, err := c.kubeadmConfig.ExportClusterfileObjects()
+	if err != nil {
+		return err
 	}
-
-	if len(c.kubeadmConfig.JoinConfiguration.TypeMeta.Kind) != 0 {
-		joinConfiguration, err := yaml.Marshal(c.kubeadmConfig.JoinConfiguration)
+	for _, cfg := range kubeadmConfigs {
+		config, err = yaml.Marshal(cfg)
 		if err != nil {
 			return err
 		}
-		clusterfileBytes = append(clusterfileBytes, joinConfiguration)
-	}
-	if len(c.kubeadmConfig.ClusterConfiguration.TypeMeta.Kind) != 0 {
-		clusterConfiguration, err := yaml.Marshal(c.kubeadmConfig.ClusterConfiguration)
-		if err != nil {
-			return err
-		}
-		clusterfileBytes = append(clusterfileBytes, clusterConfiguration)
-	}
-
-	if len(c.kubeadmConfig.KubeletConfiguration.TypeMeta.Kind) != 0 {
-		kubeletConfiguration, err := yaml.Marshal(c.kubeadmConfig.KubeletConfiguration)
-		if err != nil {
-			return err
-		}
-		clusterfileBytes = append(clusterfileBytes, kubeletConfiguration)
-	}
-
-	if len(c.kubeadmConfig.KubeProxyConfiguration.TypeMeta.Kind) != 0 {
-		kubeProxyConfiguration, err := yaml.Marshal(c.kubeadmConfig.KubeProxyConfiguration)
-		if err != nil {
-			return err
-		}
-		clusterfileBytes = append(clusterfileBytes, kubeProxyConfiguration)
+		clusterfileBytes = append(clusterfileBytes, config)
 	}
 
 	content := bytes.Join(clusterfileBytes, []byte("---\n"))

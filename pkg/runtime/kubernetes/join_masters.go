@@ -19,15 +19,14 @@ import (
 	"net"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 
 	"github.com/sealerio/sealer/pkg/runtime"
 	"github.com/sealerio/sealer/pkg/runtime/kubernetes/kubeadm"
 	"github.com/sealerio/sealer/utils/shellcommand"
-	"github.com/sealerio/sealer/utils/yaml"
 )
 
-func (k *Runtime) joinMasters(newMasters []net.IP, master0 net.IP, kubeadmConfig kubeadm.KubeadmConfig, token v1beta3.BootstrapTokenDiscovery, certKey string) error {
+func (k *Runtime) joinMasters(newMasters []net.IP, master0 net.IP, kubeadmConfig kubeadm.KubeadmConfig, token kubeadmv1beta4.BootstrapTokenDiscovery, certKey string) error {
 	if len(newMasters) == 0 {
 		return nil
 	}
@@ -79,11 +78,11 @@ func (k *Runtime) joinMasters(newMasters []net.IP, master0 net.IP, kubeadmConfig
 		kubeadmConfig.JoinConfiguration.ControlPlane.LocalAPIEndpoint.AdvertiseAddress = m.String()
 		kubeadmConfig.JoinConfiguration.ControlPlane.LocalAPIEndpoint.BindPort = int32(6443)
 		kubeadmConfig.JoinConfiguration.ControlPlane.CertificateKey = certKey
-		str, err := yaml.MarshalWithDelimiter(kubeadmConfig.JoinConfiguration, kubeadmConfig.KubeletConfiguration)
+		str, err := kubeadmConfig.MarshalJoinStack()
 		if err != nil {
 			return err
 		}
-		cmd := fmt.Sprintf("mkdir -p /etc/kubernetes && echo \"%s\" > %s", str, KubeadmFileYml)
+		cmd := fmt.Sprintf("mkdir -p /etc/kubernetes && echo \"%s\" > %s", string(str), KubeadmFileYml)
 		if err = k.infra.CmdAsync(m, nil, cmd); err != nil {
 			return fmt.Errorf("failed to set join kubeadm config on host(%s) with cmd(%s): %v", m, cmd, err)
 		}

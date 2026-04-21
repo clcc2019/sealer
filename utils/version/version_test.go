@@ -58,6 +58,18 @@ func TestVersion_Compare(t *testing.T) {
 			oldVersion:   "v1.19.8",
 			wantRes:      false,
 		},
+		{
+			name:         "test compare two digit minor versions",
+			givenVersion: "v1.35.4",
+			oldVersion:   "v1.9.9",
+			wantRes:      true,
+		},
+		{
+			name:         "test compare lower two digit minor versions",
+			givenVersion: "v1.9.9",
+			oldVersion:   "v1.35.4",
+			wantRes:      false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

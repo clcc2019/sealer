@@ -20,10 +20,7 @@ import (
 	"net"
 	"strings"
 
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
-
-	versionUtils "github.com/sealerio/sealer/utils/version"
-	"github.com/sirupsen/logrus"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 
 	"github.com/sealerio/sealer/utils"
 	strUtils "github.com/sealerio/sealer/utils/strings"
@@ -37,33 +34,17 @@ import (
 // Use github.com/imdario/mergo to merge kubeadm config in Clusterfile and the default kubeadm config
 // Using a config filter to handle some edge cases
 
-// https://github.com/kubernetes/kubernetes/blob/master/cmd/kubeadm/app/apis/kubeadm/v1beta3/types.go
-// Using map to overwrite Kubeadm configs
-
 // nolint
 type KubeadmConfig struct {
-	v1beta3.InitConfiguration
-	v1beta3.ClusterConfiguration
+	kubeadmv1beta4.InitConfiguration
+	kubeadmv1beta4.ClusterConfiguration
 	v1alpha1.KubeProxyConfiguration
 	v1beta1.KubeletConfiguration
-	v1beta3.JoinConfiguration
+	kubeadmv1beta4.JoinConfiguration
 }
 
 const (
 	EtcdServers = "etcd-servers"
-)
-
-const (
-	V1991 = "v1.19.1"
-	V1992 = "v1.19.2"
-	V1150 = "v1.15.0"
-	V1200 = "v1.20.0"
-	V1230 = "v1.23.0"
-
-	// kubeadm api version
-	KubeadmV1beta1 = "kubeadm.k8s.io/v1beta1"
-	KubeadmV1beta2 = "kubeadm.k8s.io/v1beta2"
-	KubeadmV1beta3 = "kubeadm.k8s.io/v1beta3"
 )
 
 // LoadFromClusterfile :Load KubeadmConfig from Clusterfile.
@@ -87,33 +68,6 @@ func (k *KubeadmConfig) Merge(kubeadmYamlPath string, decode func(arg string, ki
 	return mergo.Merge(k, newConfig)
 }
 
-func (k *KubeadmConfig) setAPIVersion(apiVersion string) {
-	k.InitConfiguration.APIVersion = apiVersion
-	k.ClusterConfiguration.APIVersion = apiVersion
-	k.JoinConfiguration.APIVersion = apiVersion
-}
-
-func (k *KubeadmConfig) setKubeadmAPIVersion() {
-	kv := versionUtils.Version(k.KubernetesVersion)
-	greaterThanKV1150, err := kv.GreaterThan(V1150)
-	if err != nil {
-		logrus.Errorf("compare kubernetes version failed: %s", err)
-	}
-	greaterThanKV1230, err := kv.GreaterThan(V1230)
-	if err != nil {
-		logrus.Errorf("compare kubernetes version failed: %s", err)
-	}
-	switch {
-	case greaterThanKV1150 && !greaterThanKV1230:
-		k.setAPIVersion(KubeadmV1beta2)
-	case greaterThanKV1230:
-		k.setAPIVersion(KubeadmV1beta3)
-	default:
-		// Compatible with versions 1.14 and 1.13. but do not recommend.
-		k.setAPIVersion(KubeadmV1beta1)
-	}
-}
-
 func (k *KubeadmConfig) GetCertSANS() []string {
 	return k.ClusterConfiguration.APIServer.CertSANs
 }
@@ -132,13 +86,19 @@ func LoadKubeadmConfigs(arg string, decode func(arg string, kind string) (interf
 	if err != nil && err != io.EOF {
 		return kubeadmConfig, err
 	} else if initConfig != nil {
-		kubeadmConfig.InitConfiguration = *initConfig.(*v1beta3.InitConfiguration)
+		kubeadmConfig.InitConfiguration, err = NormalizeInitConfiguration(initConfig)
+		if err != nil {
+			return kubeadmConfig, err
+		}
 	}
 	clusterConfig, err := decode(arg, ClusterConfiguration)
 	if err != nil && err != io.EOF {
 		return kubeadmConfig, err
 	} else if clusterConfig != nil {
-		kubeadmConfig.ClusterConfiguration = *clusterConfig.(*v1beta3.ClusterConfiguration)
+		kubeadmConfig.ClusterConfiguration, err = NormalizeClusterConfiguration(clusterConfig)
+		if err != nil {
+			return kubeadmConfig, err
+		}
 	}
 	kubeProxyConfig, err := decode(arg, KubeProxyConfiguration)
 	if err != nil && err != io.EOF {
@@ -156,7 +116,10 @@ func LoadKubeadmConfigs(arg string, decode func(arg string, kind string) (interf
 	if err != nil && err != io.EOF {
 		return kubeadmConfig, err
 	} else if joinConfig != nil {
-		kubeadmConfig.JoinConfiguration = *joinConfig.(*v1beta3.JoinConfiguration)
+		kubeadmConfig.JoinConfiguration, err = NormalizeJoinConfiguration(joinConfig)
+		if err != nil {
+			return kubeadmConfig, err
+		}
 	}
 	return kubeadmConfig, nil
 }
@@ -168,6 +131,17 @@ func getEtcdEndpointsWithHTTPSPrefix(masters []net.IP) string {
 	}
 
 	return strings.Join(tmpSlice, ",")
+}
+
+func setArg(args []kubeadmv1beta4.Arg, name, value string) []kubeadmv1beta4.Arg {
+	for i := range args {
+		if args[i].Name == name {
+			args[i].Value = value
+			return args
+		}
+	}
+
+	return append(args, kubeadmv1beta4.Arg{Name: name, Value: value})
 }
 
 func NewKubeadmConfig(fromClusterFile KubeadmConfig, fromFile string, masters []net.IP, apiServerDomain,
@@ -182,11 +156,7 @@ func NewKubeadmConfig(fromClusterFile KubeadmConfig, fromFile string, masters []
 
 	conf.InitConfiguration.LocalAPIEndpoint.AdvertiseAddress = masters[0].String()
 	conf.ControlPlaneEndpoint = net.JoinHostPort(apiServerDomain, "6443")
-
-	if conf.APIServer.ExtraArgs == nil {
-		conf.APIServer.ExtraArgs = make(map[string]string)
-	}
-	conf.APIServer.ExtraArgs[EtcdServers] = getEtcdEndpointsWithHTTPSPrefix(masters)
+	conf.APIServer.ExtraArgs = setArg(conf.APIServer.ExtraArgs, EtcdServers, getEtcdEndpointsWithHTTPSPrefix(masters))
 	conf.IPVS.ExcludeCIDRs = append(conf.KubeProxyConfiguration.IPVS.ExcludeCIDRs, fmt.Sprintf("%s/32", apiServerVIP))
 	conf.KubeletConfiguration.CgroupDriver = cgroupDriver
 	conf.ClusterConfiguration.APIServer.CertSANs = []string{"127.0.0.1", apiServerDomain, apiServerVIP.String()}
@@ -203,13 +173,15 @@ func NewKubeadmConfig(fromClusterFile KubeadmConfig, fromFile string, masters []
 		return conf, err
 	}
 
-	conf.setKubeadmAPIVersion()
+	if err := conf.setKubeadmAPIVersion(); err != nil {
+		return conf, err
+	}
 
 	if conf.ClusterConfiguration.Networking.DNSDomain == "" {
 		conf.ClusterConfiguration.Networking.DNSDomain = "cluster.local"
 	}
 	if conf.JoinConfiguration.Discovery.BootstrapToken == nil {
-		conf.JoinConfiguration.Discovery.BootstrapToken = &v1beta3.BootstrapTokenDiscovery{}
+		conf.JoinConfiguration.Discovery.BootstrapToken = &kubeadmv1beta4.BootstrapTokenDiscovery{}
 	}
 
 	// set cluster image repo,kubeadm will pull container image from this registry.

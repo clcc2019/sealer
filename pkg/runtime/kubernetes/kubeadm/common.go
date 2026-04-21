@@ -24,7 +24,7 @@ const (
 
 const (
 	DefaultKubeadmConfig = `
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   bindPort: 6443
@@ -32,22 +32,29 @@ nodeRegistration:
   criSocket: /var/run/dockershim.sock
 
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.19.8
+kubernetesVersion: v1.35.4
 imageRepository: sea.hub:5000
 networking:
   podSubnet: 100.64.0.0/10
   serviceSubnet: 10.96.0.0/22
 apiServer:
   extraArgs:
-    audit-policy-file: "/etc/kubernetes/audit-policy.yml"
-    audit-log-path: "/var/log/kubernetes/audit.log"
-    audit-log-format: json
-    audit-log-maxbackup: '10'
-    audit-log-maxsize: '100'
-    audit-log-maxage: '7'
-    enable-aggregator-routing: 'true'
+    - name: audit-policy-file
+      value: /etc/kubernetes/audit-policy.yml
+    - name: audit-log-path
+      value: /var/log/kubernetes/audit.log
+    - name: audit-log-format
+      value: json
+    - name: audit-log-maxbackup
+      value: "10"
+    - name: audit-log-maxsize
+      value: "100"
+    - name: audit-log-maxage
+      value: "7"
+    - name: enable-aggregator-routing
+      value: "true"
   extraVolumes:
     - name: "audit"
       hostPath: "/etc/kubernetes"
@@ -64,7 +71,8 @@ apiServer:
       pathType: File
 controllerManager:
   extraArgs:
-    cluster-signing-duration: 876000h
+    - name: cluster-signing-duration
+      value: 876000h
   extraVolumes:
     - hostPath: /etc/localtime
       mountPath: /etc/localtime
@@ -81,7 +89,8 @@ scheduler:
 etcd:
   local:
     extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381
+      - name: listen-metrics-urls
+        value: http://0.0.0.0:2381
 
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
@@ -162,11 +171,11 @@ streamingConnectionIdleTimeout: 4h0m0s
 syncFrequency: 1m0s
 volumeStatsAggPeriod: 1m0s
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 caCertPath: /etc/kubernetes/pki/ca.crt
-discovery:
-  timeout: 5m0s
+timeouts:
+  discovery: 5m0s
 nodeRegistration:
   criSocket: /var/run/dockershim.sock
 controlPlane:

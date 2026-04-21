@@ -29,7 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/kube-proxy/config/v1alpha1"
 	"k8s.io/kubelet/config/v1beta1"
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta3 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	kubeadmConstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 
 	"github.com/sealerio/sealer/common"
@@ -201,17 +202,32 @@ func decodePluginListFunc(reader io.Reader) (interface{}, error) {
 }
 
 func decodeInitConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} { return &v1beta3.InitConfiguration{} }
+	switchVersion := func(version string) interface{} {
+		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
+			return &kubeadmv1beta3.InitConfiguration{}
+		}
+		return &kubeadmv1beta4.InitConfiguration{}
+	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.InitConfigurationKind, switchVersion)
 }
 
 func decodeJoinConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} { return &v1beta3.JoinConfiguration{} }
+	switchVersion := func(version string) interface{} {
+		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
+			return &kubeadmv1beta3.JoinConfiguration{}
+		}
+		return &kubeadmv1beta4.JoinConfiguration{}
+	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.JoinConfigurationKind, switchVersion)
 }
 
 func decodeClusterConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} { return &v1beta3.ClusterConfiguration{} }
+	switchVersion := func(version string) interface{} {
+		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
+			return &kubeadmv1beta3.ClusterConfiguration{}
+		}
+		return &kubeadmv1beta4.ClusterConfiguration{}
+	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.ClusterConfigurationKind, switchVersion)
 }
 

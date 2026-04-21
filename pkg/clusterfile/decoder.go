@@ -28,10 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/kube-proxy/config/v1alpha1"
 	"k8s.io/kubelet/config/v1beta1"
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta3 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	kubeadmConstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 
 	"github.com/sealerio/sealer/common"
+	sealerkubeadm "github.com/sealerio/sealer/pkg/runtime/kubernetes/kubeadm"
 	"github.com/sealerio/sealer/types/api/constants"
 	v1 "github.com/sealerio/sealer/types/api/v1"
 	v2 "github.com/sealerio/sealer/types/api/v2"
@@ -137,29 +139,59 @@ func decodeClusterFile(reader io.Reader, clusterfile *ClusterFile) error {
 
 			clusterfile.app = &app
 		case kubeadmConstants.InitConfigurationKind:
-			var in v1beta3.InitConfiguration
-
-			if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
-				return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+			var normalizeErr error
+			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+				var in kubeadmv1beta3.InitConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.InitConfiguration, normalizeErr = sealerkubeadm.NormalizeInitConfiguration(&in)
+			} else {
+				var in kubeadmv1beta4.InitConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.InitConfiguration, normalizeErr = sealerkubeadm.NormalizeInitConfiguration(&in)
 			}
-
-			clusterfile.kubeadmConfig.InitConfiguration = in
+			if normalizeErr != nil {
+				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)
+			}
 		case kubeadmConstants.JoinConfigurationKind:
-			var in v1beta3.JoinConfiguration
-
-			if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
-				return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+			var normalizeErr error
+			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+				var in kubeadmv1beta3.JoinConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.JoinConfiguration, normalizeErr = sealerkubeadm.NormalizeJoinConfiguration(&in)
+			} else {
+				var in kubeadmv1beta4.JoinConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.JoinConfiguration, normalizeErr = sealerkubeadm.NormalizeJoinConfiguration(&in)
 			}
-
-			clusterfile.kubeadmConfig.JoinConfiguration = in
+			if normalizeErr != nil {
+				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)
+			}
 		case kubeadmConstants.ClusterConfigurationKind:
-			var in v1beta3.ClusterConfiguration
-
-			if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
-				return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+			var normalizeErr error
+			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+				var in kubeadmv1beta3.ClusterConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.ClusterConfiguration, normalizeErr = sealerkubeadm.NormalizeClusterConfiguration(&in)
+			} else {
+				var in kubeadmv1beta4.ClusterConfiguration
+				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
+					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
+				}
+				clusterfile.kubeadmConfig.ClusterConfiguration, normalizeErr = sealerkubeadm.NormalizeClusterConfiguration(&in)
 			}
-
-			clusterfile.kubeadmConfig.ClusterConfiguration = in
+			if normalizeErr != nil {
+				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)
+			}
 		case common.KubeletConfiguration:
 			var in v1beta1.KubeletConfiguration
 

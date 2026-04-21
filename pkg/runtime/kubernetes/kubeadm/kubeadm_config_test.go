@@ -36,7 +36,7 @@ spec:
     bindPort: 6443
   nodeRegistration:
     criSocket: /var/run/dockershim.sock
-  kubernetesVersion: v1.19.8
+  kubernetesVersion: v1.35.4
   controlPlaneEndpoint: "apiserver.cluster.local:6443"
   imageRepository: sea.hub:5000/library
   networking:
@@ -57,7 +57,7 @@ kind: Cluster
 metadata:
   name: default-kubernetes-cluster
 spec:
-  image: kubernetes:v1.19.8
+  image: kubernetes:v1.35.4
 ---
 apiVersion: sealer.io/v2
 kind: Infra
@@ -151,7 +151,7 @@ streamingConnectionIdleTimeout: 4h0m0s
 syncFrequency: 1m0s
 volumeStatsAggPeriod: 1m0s
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 networking:
   podSubnet: 100.64.0.0/10
@@ -160,7 +160,7 @@ apiServer:
   certSANs:
     - default.raw.config
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   advertiseAddress: 127.0.0.1 

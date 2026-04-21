@@ -21,14 +21,13 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 
 	"github.com/sealerio/sealer/pkg/runtime/kubernetes/kubeadm"
 	utilsnet "github.com/sealerio/sealer/utils/net"
-	"github.com/sealerio/sealer/utils/yaml"
 )
 
-func (k *Runtime) joinNodes(newNodes, masters []net.IP, kubeadmConfig kubeadm.KubeadmConfig, token v1beta3.BootstrapTokenDiscovery) error {
+func (k *Runtime) joinNodes(newNodes, masters []net.IP, kubeadmConfig kubeadm.KubeadmConfig, token kubeadmv1beta4.BootstrapTokenDiscovery) error {
 	if len(newNodes) == 0 {
 		return nil
 	}
@@ -62,11 +61,11 @@ func (k *Runtime) joinNodes(newNodes, masters []net.IP, kubeadmConfig kubeadm.Ku
 			if output, err := k.infra.CmdToString(node, nil, GetCustomizeCRISocket, ""); err == nil && output != "" {
 				myKubeadmConfig.JoinConfiguration.NodeRegistration.CRISocket = output
 			}
-			joinConfig, err := yaml.MarshalWithDelimiter(myKubeadmConfig.JoinConfiguration, myKubeadmConfig.KubeletConfiguration)
+			joinConfig, err := myKubeadmConfig.MarshalJoinStack()
 			if err != nil {
 				return err
 			}
-			writeJoinConfigCmd := fmt.Sprintf("mkdir -p /etc/kubernetes && echo \"%s\" > %s", joinConfig, KubeadmFileYml)
+			writeJoinConfigCmd := fmt.Sprintf("mkdir -p /etc/kubernetes && echo \"%s\" > %s", string(joinConfig), KubeadmFileYml)
 
 			err = k.checkMultiNetworkAddVIPRoute(node)
 			if err != nil {
