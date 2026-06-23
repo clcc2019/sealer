@@ -2,8 +2,11 @@ package kubeadm
 
 import (
 	"fmt"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmscheme "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/scheme"
 	kubeadmv1beta3 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
@@ -17,14 +20,26 @@ func init() {
 	kubeadmscheme.AddToScheme(scheme)
 }
 
+func convertKubeadmConfig(in, internal, out interface{}, name, targetVersion string) error {
+	if err := scheme.Convert(in, internal, nil); err != nil {
+		return fmt.Errorf("convert %s to internal kubeadm config: %w", name, err)
+	}
+	if err := scheme.Convert(internal, out, nil); err != nil {
+		return fmt.Errorf("convert internal kubeadm config to %s %s: %w", targetVersion, name, err)
+	}
+
+	return nil
+}
+
 func NormalizeInitConfiguration(config interface{}) (kubeadmv1beta4.InitConfiguration, error) {
 	switch cfg := config.(type) {
 	case *kubeadmv1beta4.InitConfiguration:
 		return *cfg, nil
 	case *kubeadmv1beta3.InitConfiguration:
 		out := kubeadmv1beta4.InitConfiguration{}
-		if err := scheme.Convert(cfg, &out, nil); err != nil {
-			return out, fmt.Errorf("convert kubeadm init configuration to v1beta4: %w", err)
+		internal := kubeadmapi.InitConfiguration{}
+		if err := convertKubeadmConfig(cfg, &internal, &out, "init configuration", KubeadmV1beta4); err != nil {
+			return out, err
 		}
 		return out, nil
 	default:
@@ -38,8 +53,9 @@ func NormalizeClusterConfiguration(config interface{}) (kubeadmv1beta4.ClusterCo
 		return *cfg, nil
 	case *kubeadmv1beta3.ClusterConfiguration:
 		out := kubeadmv1beta4.ClusterConfiguration{}
-		if err := scheme.Convert(cfg, &out, nil); err != nil {
-			return out, fmt.Errorf("convert kubeadm cluster configuration to v1beta4: %w", err)
+		internal := kubeadmapi.ClusterConfiguration{}
+		if err := convertKubeadmConfig(cfg, &internal, &out, "cluster configuration", KubeadmV1beta4); err != nil {
+			return out, err
 		}
 		return out, nil
 	default:
@@ -53,8 +69,9 @@ func NormalizeJoinConfiguration(config interface{}) (kubeadmv1beta4.JoinConfigur
 		return *cfg, nil
 	case *kubeadmv1beta3.JoinConfiguration:
 		out := kubeadmv1beta4.JoinConfiguration{}
-		if err := scheme.Convert(cfg, &out, nil); err != nil {
-			return out, fmt.Errorf("convert kubeadm join configuration to v1beta4: %w", err)
+		internal := kubeadmapi.JoinConfiguration{}
+		if err := convertKubeadmConfig(cfg, &internal, &out, "join configuration", KubeadmV1beta4); err != nil {
+			return out, err
 		}
 		return out, nil
 	default:
@@ -144,6 +161,16 @@ func (k KubeadmConfig) ExportClusterfileObjects() ([]interface{}, error) {
 }
 
 func exportKubeadmConfigs(config KubeadmConfig, apiVersion string) (interface{}, interface{}, interface{}, error) {
+	if config.JoinConfiguration.Discovery.BootstrapToken == nil {
+		config.JoinConfiguration.Discovery.BootstrapToken = &kubeadmv1beta4.BootstrapTokenDiscovery{}
+	}
+	if config.JoinConfiguration.Timeouts == nil {
+		config.JoinConfiguration.Timeouts = &kubeadmv1beta4.Timeouts{}
+	}
+	if config.JoinConfiguration.Timeouts.Discovery == nil {
+		config.JoinConfiguration.Timeouts.Discovery = &metav1.Duration{Duration: 5 * time.Minute}
+	}
+
 	switch apiVersion {
 	case KubeadmV1beta4:
 		initConfig := config.InitConfiguration
@@ -161,22 +188,25 @@ func exportKubeadmConfigs(config KubeadmConfig, apiVersion string) (interface{},
 		return &initConfig, &clusterConfig, &joinConfig, nil
 	case KubeadmV1beta3:
 		initConfig := kubeadmv1beta3.InitConfiguration{}
-		if err := scheme.Convert(&config.InitConfiguration, &initConfig, nil); err != nil {
-			return nil, nil, nil, fmt.Errorf("convert kubeadm init configuration to v1beta3: %w", err)
+		initInternal := kubeadmapi.InitConfiguration{}
+		if err := convertKubeadmConfig(&config.InitConfiguration, &initInternal, &initConfig, "init configuration", KubeadmV1beta3); err != nil {
+			return nil, nil, nil, err
 		}
 		initConfig.APIVersion = apiVersion
 		initConfig.Kind = InitConfiguration
 
 		clusterConfig := kubeadmv1beta3.ClusterConfiguration{}
-		if err := scheme.Convert(&config.ClusterConfiguration, &clusterConfig, nil); err != nil {
-			return nil, nil, nil, fmt.Errorf("convert kubeadm cluster configuration to v1beta3: %w", err)
+		clusterInternal := kubeadmapi.ClusterConfiguration{}
+		if err := convertKubeadmConfig(&config.ClusterConfiguration, &clusterInternal, &clusterConfig, "cluster configuration", KubeadmV1beta3); err != nil {
+			return nil, nil, nil, err
 		}
 		clusterConfig.APIVersion = apiVersion
 		clusterConfig.Kind = ClusterConfiguration
 
 		joinConfig := kubeadmv1beta3.JoinConfiguration{}
-		if err := scheme.Convert(&config.JoinConfiguration, &joinConfig, nil); err != nil {
-			return nil, nil, nil, fmt.Errorf("convert kubeadm join configuration to v1beta3: %w", err)
+		joinInternal := kubeadmapi.JoinConfiguration{}
+		if err := convertKubeadmConfig(&config.JoinConfiguration, &joinInternal, &joinConfig, "join configuration", KubeadmV1beta3); err != nil {
+			return nil, nil, nil, err
 		}
 		joinConfig.APIVersion = apiVersion
 		joinConfig.Kind = JoinConfiguration

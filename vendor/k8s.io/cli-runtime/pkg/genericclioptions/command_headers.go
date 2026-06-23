@@ -19,6 +19,7 @@ package genericclioptions
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -33,24 +34,33 @@ const (
 // round tripper to add Request headers before delegation. Implements
 // the go standard library "http.RoundTripper" interface.
 type CommandHeaderRoundTripper struct {
-	Delegate http.RoundTripper
-	Headers  map[string]string
+	Delegate    http.RoundTripper
+	Headers     map[string]string
+	SkipHeaders *atomic.Bool
 }
 
 // CommandHeaderRoundTripper adds Request headers before delegating to standard
 // round tripper. These headers are kubectl command headers which
 // detail the kubectl command. See SIG CLI KEP 859:
-//   https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
+//
+//	https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
 func (c *CommandHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if c.shouldSkipHeaders() {
+		return c.Delegate.RoundTrip(req)
+	}
+
 	for header, value := range c.Headers {
 		req.Header.Set(header, value)
 	}
+
 	return c.Delegate.RoundTrip(req)
 }
 
 // ParseCommandHeaders fills in a map of custom headers into the CommandHeaderRoundTripper. These
 // headers are then filled into each request. For details on the custom headers see:
-//   https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
+//
+//	https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
+//
 // Each call overwrites the previously parsed command headers (not additive).
 // TODO(seans3): Parse/add flags removing PII from flag values.
 func (c *CommandHeaderRoundTripper) ParseCommandHeaders(cmd *cobra.Command, args []string) {
@@ -88,4 +98,12 @@ func (c *CommandHeaderRoundTripper) CancelRequest(req *http.Request) {
 	if cr, ok := c.Delegate.(canceler); ok {
 		cr.CancelRequest(req)
 	}
+}
+
+func (c *CommandHeaderRoundTripper) shouldSkipHeaders() bool {
+	if c.SkipHeaders == nil {
+		return false
+	}
+
+	return c.SkipHeaders.Load()
 }

@@ -2,17 +2,21 @@ package imagebuilder
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
 	docker "github.com/fsouza/go-dockerclient"
 
+	buildkitparser "github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/openshift/imagebuilder/dockerfile/command"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
@@ -31,6 +35,35 @@ type Copy struct {
 	// to the executor for handling.
 	Chown string
 	Chmod string
+	// If set, a checksum which the source must match, or be rejected.
+	Checksum string
+	// Additional files which need to be created by executor for this
+	// instruction.
+	Files []File
+	// If set, when the source is a URL for a remote Git repository,
+	// refrain from stripping out the .git subdirectory after cloning it.
+	KeepGitDir bool
+	// If set, instead of adding these items to the rootfs and picking them
+	// up as part of a subsequent diff generation, build an archive of them
+	// and include it as an independent layer.
+	Link bool
+	// If set, preserve leading directories in the paths of items being
+	// copied, relative to either the top of the build context, or to the
+	// "pivot point", a location in the source path marked by a path
+	// component named "." (i.e., where "/./" occurs in the path).
+	Parents bool
+	// Exclusion patterns, a la .dockerignore, relative to either the top
+	// of a directory tree being copied, or the "pivot point", a location
+	// in the source path marked by a path component named ".".
+	Excludes []string
+}
+
+// File defines if any additional file needs to be created
+// by the executor instruction so that specified command
+// can execute/copy the created file inside the build container.
+type File struct {
+	Name string // Name of the new file.
+	Data string // Content of the file.
 }
 
 // Run defines a run operation required in the container.
@@ -39,11 +72,19 @@ type Run struct {
 	Args  []string
 	// Mounts are mounts specified through the --mount flag inside the Containerfile
 	Mounts []string
+	// Network specifies the network mode to run the container with
+	Network string
+	// Additional files which need to be created by executor for this
+	// instruction.
+	Files []File
 }
 
 type Executor interface {
 	Preserve(path string) error
+	// EnsureContainerPath should ensure that the directory exists, creating any components required
 	EnsureContainerPath(path string) error
+	// EnsureContainerPathAs should ensure that the directory exists, creating any components required
+	// with the specified owner and mode, if either is specified
 	EnsureContainerPathAs(path, user string, mode *os.FileMode) error
 	Copy(excludes []string, copies ...Copy) error
 	Run(run Run, config docker.Config) error
@@ -73,7 +114,7 @@ func (logExecutor) EnsureContainerPathAs(path, user string, mode *os.FileMode) e
 
 func (logExecutor) Copy(excludes []string, copies ...Copy) error {
 	for _, c := range copies {
-		log.Printf("COPY %v -> %s (from:%s download:%t), chown: %s, chmod %s", c.Src, c.Dest, c.From, c.Download, c.Chown, c.Chmod)
+		log.Printf("COPY %v -> %s (from:%s download:%t), chown: %s, chmod %s, checksum: %s", c.Src, c.Dest, c.From, c.Download, c.Chown, c.Chmod, c.Checksum)
 	}
 	return nil
 }
@@ -177,6 +218,21 @@ func (stages Stages) ByName(name string) (Stage, bool) {
 			return stage, true
 		}
 	}
+	if i, err := strconv.Atoi(name); err == nil {
+		return stages.ByPosition(i)
+	}
+	return Stage{}, false
+}
+
+func (stages Stages) ByPosition(position int) (Stage, bool) {
+	for _, stage := range stages {
+		// stage.Position is expected to be the same as the unnamed
+		// index variable for this loop, but comparing to the Position
+		// field's value is easier to explain
+		if stage.Position == position {
+			return stage, true
+		}
+	}
 	return Stage{}, false
 }
 
@@ -188,6 +244,16 @@ func (stages Stages) ByTarget(target string) (Stages, bool) {
 	for i, stage := range stages {
 		if stage.Name == target {
 			return stages[i : i+1], true
+		}
+	}
+	if position, err := strconv.Atoi(target); err == nil {
+		for i, stage := range stages {
+			// stage.Position is expected to be the same as the unnamed
+			// index variable for this loop, but comparing to the Position
+			// field's value is easier to explain
+			if stage.Position == position {
+				return stages[i : i+1], true
+			}
 		}
 	}
 	return nil, false
@@ -203,6 +269,16 @@ func (stages Stages) ThroughTarget(target string) (Stages, bool) {
 			return stages[0 : i+1], true
 		}
 	}
+	if position, err := strconv.Atoi(target); err == nil {
+		for i, stage := range stages {
+			// stage.Position is expected to be the same as the unnamed
+			// index variable for this loop, but comparing to the Position
+			// field's value is easier to explain
+			if stage.Position == position {
+				return stages[0 : i+1], true
+			}
+		}
+	}
 	return nil, false
 }
 
@@ -214,32 +290,94 @@ type Stage struct {
 }
 
 func NewStages(node *parser.Node, b *Builder) (Stages, error) {
-	var stages Stages
-	var allDeclaredArgs []string
-	for _, root := range SplitBy(node, command.Arg) {
-		argNode := root.Children[0]
-		if argNode.Value == command.Arg {
-			// extract declared variable
-			s := strings.SplitN(argNode.Original, " ", 2)
-			if len(s) == 2 && (strings.ToLower(s[0]) == command.Arg) {
-				allDeclaredArgs = append(allDeclaredArgs, s[1])
+	getStageFrom := func(stageIndex int, root *parser.Node) (from string, as string, err error) {
+		for _, child := range root.Children {
+			if !strings.EqualFold(child.Value, command.From) {
+				continue
+			}
+			if child.Next == nil {
+				return "", "", errors.New("FROM requires an argument")
+			}
+			if child.Next.Value == "" {
+				return "", "", errors.New("FROM requires a non-empty argument")
+			}
+			from = child.Next.Value
+			if name, ok := extractNameFromNode(child); ok {
+				as = name
+			}
+			return from, as, nil
+		}
+		return "", "", fmt.Errorf("stage %d requires a FROM instruction (%q)", stageIndex+1, root.Original)
+	}
+	argInstructionsInStages := make(map[string][]string)
+	setStageInheritedArgs := func(s *Stage) error {
+		from, as, err := getStageFrom(s.Position, s.Node)
+		if err != nil {
+			return err
+		}
+		inheritedArgs := argInstructionsInStages[from]
+		thisStageArgs := slices.Clone(inheritedArgs)
+		for _, child := range s.Node.Children {
+			if !strings.EqualFold(child.Value, command.Arg) {
+				continue
+			}
+			if child.Next == nil {
+				return errors.New("ARG requires an argument")
+			}
+			if child.Next.Value == "" {
+				return errors.New("ARG requires a non-empty argument")
+			}
+			next := child.Next
+			for next != nil {
+				thisStageArgs = append(thisStageArgs, next.Value)
+				next = next.Next
 			}
 		}
+		if as != "" {
+			argInstructionsInStages[as] = thisStageArgs
+		}
+		argInstructionsInStages[strconv.Itoa(s.Position)] = thisStageArgs
+		return arg(s.Builder, inheritedArgs, nil, nil, "", nil)
 	}
+	var stages Stages
+	var headingArgs []string
 	if err := b.extractHeadingArgsFromNode(node); err != nil {
 		return stages, err
 	}
+	for k := range b.HeadingArgs {
+		headingArgs = append(headingArgs, k)
+	}
 	for i, root := range SplitBy(node, command.From) {
-		name, _ := extractNameFromNode(root.Children[0])
-		if len(name) == 0 {
+		name, hasName := extractNameFromNode(root.Children[0])
+		if !hasName {
 			name = strconv.Itoa(i)
 		}
-		stages = append(stages, Stage{
+		filteredUserArgs := make(map[string]string)
+		for k, v := range b.UserArgs {
+			for _, a := range b.GlobalAllowedArgs {
+				if a == k {
+					filteredUserArgs[k] = v
+				}
+			}
+		}
+		userArgs := envMapAsSlice(filteredUserArgs)
+		userArgs = mergeEnv(envMapAsSlice(b.BuiltinArgDefaults), userArgs)
+		userArgs = mergeEnv(envMapAsSlice(builtinArgDefaults), userArgs)
+		userArgs = mergeEnv(envMapAsSlice(b.HeadingArgs), userArgs)
+		processedName, err := ProcessWord(name, userArgs)
+		if err != nil {
+			return nil, err
+		}
+		stage := Stage{
 			Position: i,
-			Name:     name,
-			Builder:  b.builderForStage(allDeclaredArgs),
+			Name:     processedName,
+			Builder:  b.builderForStage(headingArgs),
 			Node:     root,
-		})
+		}
+		if err := setStageInheritedArgs(&stage); err != nil {
+			return nil, err
+		}
+		stages = append(stages, stage)
 	}
 	return stages, nil
 }
@@ -264,6 +402,14 @@ func (b *Builder) extractHeadingArgsFromNode(node *parser.Node) error {
 
 	// Use a separate builder to evaluate the heading args
 	tempBuilder := NewBuilder(b.UserArgs)
+
+	// Built-in ARGs are declared implicitly in the heading and should be resolvable in its scope
+	for k, v := range tempBuilder.BuiltinArgDefaults {
+		tempBuilder.AllowedArgs[k] = true
+		if _, ok := tempBuilder.Args[k]; !ok {
+			tempBuilder.Args[k] = v
+		}
+	}
 
 	// Evaluate all the heading arg commands
 	for _, c := range args {
@@ -302,32 +448,41 @@ func extractNameFromNode(node *parser.Node) (string, bool) {
 }
 
 func (b *Builder) builderForStage(globalArgsList []string) *Builder {
-	stageBuilder := newBuilderWithGlobalAllowedArgs(b.UserArgs, globalArgsList)
-	for k, v := range b.HeadingArgs {
-		stageBuilder.HeadingArgs[k] = v
-	}
+	stageBuilder := newBuilderWithGlobalAllowedArgs(b.UserArgs, b.HeadingArgs, b.BuiltinArgDefaults, globalArgsList)
 	return stageBuilder
 }
 
 type Builder struct {
 	RunConfig docker.Config
 
-	Env         []string
-	Args        map[string]string
-	HeadingArgs map[string]string
-	UserArgs    map[string]string
-	CmdSet      bool
-	Author      string
-	// Certain instructions like `FROM` will need to use
-	// `ARG` decalred before or not in this stage hence
-	// while processing instruction like `FROM ${SOME_ARG}`
-	// we will make sure to verify if they are declared any
-	// where in containerfile or not.
-	GlobalAllowedArgs []string
+	Env []string
 
+	// Args contains values originally given to NewBuilder() or set due to
+	// ARG instructions in a stage, either with a default value provided,
+	// or with a default inherited from an ARG instruction in the header
+	Args map[string]string
+	// HeadingArgs contains the values for ARG instructions in the
+	// Dockerfile which occurred before the first FROM instruction, either
+	// with a default value provided as part of the ARG instruction, or
+	// expecting a value to be supplied in UserArgs via NewBuilder().
+	HeadingArgs map[string]string
+	// UserArgs includes a copy of the values that were passed to
+	// NewBuilder(), unmodified.
+	UserArgs map[string]string
+
+	CmdSet bool
+	Author string
+
+	// GlobalAllowedArgs are args which should be resolvable in a FROM
+	// instruction, either built-in and always available, or introduced by
+	// an ARG instruction in the header.
+	GlobalAllowedArgs []string
+	// AllowedArgs are args which should be resolvable in this stage,
+	// having been introduced by a previous ARG instruction in this stage.
 	AllowedArgs map[string]bool
-	Volumes     VolumeSet
-	Excludes    []string
+
+	Volumes  VolumeSet
+	Excludes []string
 
 	PendingVolumes VolumeSet
 	PendingRuns    []Run
@@ -337,13 +492,18 @@ type Builder struct {
 	// Raw platform string specified with `FROM --platform` of the stage
 	// It's up to the implementation or client to parse and use this field
 	Platform string
+
+	// Overrides for TARGET... and BUILD... values. TARGET... values are
+	// typically only necessary if the builder's target platform is not the
+	// same as the build platform.
+	BuiltinArgDefaults map[string]string
 }
 
 func NewBuilder(args map[string]string) *Builder {
-	return newBuilderWithGlobalAllowedArgs(args, []string{})
+	return newBuilderWithGlobalAllowedArgs(args, nil, nil, []string{})
 }
 
-func newBuilderWithGlobalAllowedArgs(args map[string]string, globalallowedargs []string) *Builder {
+func newBuilderWithGlobalAllowedArgs(args, headingArgs, userBuiltinArgDefaults map[string]string, globalAllowedArgs []string) *Builder {
 	allowed := make(map[string]bool)
 	for k, v := range builtinAllowedBuildArgs {
 		allowed[k] = v
@@ -354,12 +514,28 @@ func newBuilderWithGlobalAllowedArgs(args map[string]string, globalallowedargs [
 		userArgs[k] = v
 		initialArgs[k] = v
 	}
+	var copiedGlobalAllowedArgs []string
+	if len(globalAllowedArgs) > 0 {
+		copiedGlobalAllowedArgs = append([]string{}, globalAllowedArgs...)
+	}
+	copiedHeadingArgs := make(map[string]string)
+	for k, v := range headingArgs {
+		copiedHeadingArgs[k] = v
+	}
+	copiedBuiltinArgDefaults := make(map[string]string)
+	for k, v := range builtinArgDefaults {
+		copiedBuiltinArgDefaults[k] = v
+	}
+	for k, v := range userBuiltinArgDefaults {
+		copiedBuiltinArgDefaults[k] = v
+	}
 	return &Builder{
-		Args:              initialArgs,
-		UserArgs:          userArgs,
-		HeadingArgs:       make(map[string]string),
-		AllowedArgs:       allowed,
-		GlobalAllowedArgs: globalallowedargs,
+		Args:               initialArgs,
+		UserArgs:           userArgs,
+		HeadingArgs:        copiedHeadingArgs,
+		AllowedArgs:        allowed,
+		GlobalAllowedArgs:  copiedGlobalAllowedArgs,
+		BuiltinArgDefaults: copiedBuiltinArgDefaults,
 	}
 }
 
@@ -389,7 +565,7 @@ func (b *Builder) Run(step *Step, exec Executor, noRunsRemaining bool) error {
 	if !ok {
 		return exec.UnrecognizedInstruction(step)
 	}
-	if err := fn(b, step.Args, step.Attrs, step.Flags, step.Original); err != nil {
+	if err := fn(b, step.Args, step.Attrs, step.Flags, step.Original, step.Heredocs); err != nil {
 		return err
 	}
 
@@ -569,7 +745,7 @@ func SplitBy(node *parser.Node, value string) []*parser.Node {
 }
 
 // StepFunc is invoked with the result of a resolved step.
-type StepFunc func(*Builder, []string, map[string]bool, []string, string) error
+type StepFunc func(*Builder, []string, map[string]bool, []string, string, []buildkitparser.Heredoc) error
 
 var evaluateTable = map[string]StepFunc{
 	command.Env:         env,
@@ -604,14 +780,14 @@ var builtinAllowedBuildArgs = map[string]bool{
 	"no_proxy":    true,
 }
 
-// ParseIgnore returns a list of the excludes in the specified path
-// path should be a file with the .dockerignore format
+// ParseIgnoreReader returns a list of the excludes in the provided file
+// which uses the .dockerignore format
 // extracted from fsouza/go-dockerclient and modified to drop comments and
 // empty lines.
-func ParseIgnore(path string) ([]string, error) {
+func ParseIgnoreReader(r io.Reader) ([]string, error) {
 	var excludes []string
 
-	ignores, err := ioutil.ReadFile(path)
+	ignores, err := io.ReadAll(r)
 	if err != nil {
 		return excludes, err
 	}
@@ -625,6 +801,18 @@ func ParseIgnore(path string) ([]string, error) {
 		}
 	}
 	return excludes, nil
+}
+
+// ParseIgnore returns a list returned by having ParseIgnoreReader() read the
+// specified path
+func ParseIgnore(path string) ([]string, error) {
+	var excludes []string
+
+	ignores, err := ioutil.ReadFile(path)
+	if err != nil {
+		return excludes, err
+	}
+	return ParseIgnoreReader(bytes.NewReader(ignores))
 }
 
 // ParseDockerIgnore returns a list of the excludes in the .containerignore or .dockerignore file.

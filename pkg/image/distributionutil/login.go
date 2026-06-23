@@ -16,6 +16,7 @@ package distributionutil
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,14 +28,14 @@ import (
 
 	"github.com/docker/distribution/registry/client/auth"
 	"github.com/docker/distribution/registry/client/transport"
-	"github.com/docker/docker/api/types"
+	registrytypes "github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/dockerversion"
 	dockerRegistry "github.com/docker/docker/registry"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
-func Login(ctx context.Context, authConfig *types.AuthConfig) error {
+func Login(ctx context.Context, authConfig *registrytypes.AuthConfig) error {
 	domain := authConfig.ServerAddress
 	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
 		domain = "https://" + domain
@@ -45,8 +46,11 @@ func Login(ctx context.Context, authConfig *types.AuthConfig) error {
 	}
 
 	modifiers := dockerRegistry.Headers(dockerversion.DockerUserAgent(ctx), nil)
-	base := dockerRegistry.NewTransport(nil)
-	base.TLSClientConfig.InsecureSkipVerify = os.Getenv("SKIP_TLS_VERIFY") == "true"
+	base := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: os.Getenv("SKIP_TLS_VERIFY") == "true",
+		},
+	}
 	if err := dockerRegistry.ReadCertsDirectory(base.TLSClientConfig, filepath.Join(dockerRegistry.CertsDir(), endpointURL.Host)); err != nil {
 		return err
 	}
@@ -91,7 +95,7 @@ func Login(ctx context.Context, authConfig *types.AuthConfig) error {
 }
 
 func authHTTPClient(endpoint *url.URL, authTransport http.RoundTripper, modifiers []transport.RequestModifier, creds auth.CredentialStore, scopes []auth.Scope) (*http.Client, error) {
-	challengeManager, _, err := dockerRegistry.PingV2Registry(endpoint, authTransport)
+	challengeManager, err := dockerRegistry.PingV2Registry(endpoint, authTransport)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +119,7 @@ func authHTTPClient(endpoint *url.URL, authTransport http.RoundTripper, modifier
 }
 
 type loginCredentialStore struct {
-	authConfig *types.AuthConfig
+	authConfig *registrytypes.AuthConfig
 }
 
 func (lcs loginCredentialStore) Basic(*url.URL) (string, string) {

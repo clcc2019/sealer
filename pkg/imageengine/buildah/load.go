@@ -23,12 +23,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/common/libimage"
 	"github.com/go-errors/errors"
 	"github.com/sealerio/sealer/common"
 	"github.com/sealerio/sealer/pkg/define/options"
 	"github.com/sealerio/sealer/utils/archive"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
 )
 
 var LoadError = errors.Errorf("failed to load new image")
@@ -140,6 +140,6 @@ func (engine *Engine) loadOneImage(imageSrc string, loadOpts *libimage.LoadOptio
 		return err
 	}
 
-	logrus.Infof("Loaded image: " + strings.Join(loadedImages, "\nLoaded image: "))
+	logrus.Info("Loaded image: " + strings.Join(loadedImages, "\nLoaded image: "))
 	return nil
 }

@@ -26,7 +26,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/docker/docker/pkg/system"
 	"github.com/pkg/errors"
 
 	"github.com/sealerio/sealer/build/kubefile/command"
@@ -133,9 +132,6 @@ func (d *Directive) setEscapeToken(s string) error {
 func (d *Directive) setPlatformToken(s string) error {
 	s = strings.ToLower(s)
 	valid := []string{runtime.GOOS}
-	if system.LCOWSupported() {
-		valid = append(valid, "linux")
-	}
 	for _, item := range valid {
 		if s == item {
 			d.platformToken = s
@@ -166,19 +162,15 @@ func (d *Directive) possibleParserDirective(line string) error {
 		}
 	}
 
-	// TODO @jhowardmsft LCOW Support: Eventually this check can be removed,
-	// but only recognise a platform token if running in LCOW mode.
-	if system.LCOWSupported() {
-		tpcMatch := tokenPlatformCommand.FindStringSubmatch(strings.ToLower(line))
-		if len(tpcMatch) != 0 {
-			for i, n := range tokenPlatformCommand.SubexpNames() {
-				if n == "platform" {
-					if d.platformSeen {
-						return errors.New("only one platform parser directive can be used")
-					}
-					d.platformSeen = true
-					return d.setPlatformToken(tpcMatch[i])
+	tpcMatch := tokenPlatformCommand.FindStringSubmatch(strings.ToLower(line))
+	if len(tpcMatch) != 0 {
+		for i, n := range tokenPlatformCommand.SubexpNames() {
+			if n == "platform" {
+				if d.platformSeen {
+					return errors.New("only one platform parser directive can be used")
 				}
+				d.platformSeen = true
+				return d.setPlatformToken(tpcMatch[i])
 			}
 		}
 	}
@@ -266,7 +258,7 @@ func (r *Result) PrintWarnings(out io.Writer) {
 	if len(r.Warnings) == 0 {
 		return
 	}
-	fmt.Fprintf(out, strings.Join(r.Warnings, "\n")+"\n")
+	fmt.Fprintln(out, strings.Join(r.Warnings, "\n"))
 }
 
 // Parse reads lines from a Reader, parses the lines into an AST and returns

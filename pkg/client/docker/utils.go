@@ -20,6 +20,7 @@ import (
 
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
+	registrytypes "github.com/docker/docker/api/types/registry"
 	dockerregistry "github.com/docker/docker/registry"
 	"github.com/sirupsen/logrus"
 
@@ -39,7 +40,7 @@ func GetCanonicalImageName(rawImageName string) (reference.Named, error) {
 func GetCanonicalImagePullOptions(canonicalImageName string) types.ImagePullOptions {
 	var (
 		err         error
-		authConfig  types.AuthConfig
+		authConfig  registrytypes.AuthConfig
 		encodedJSON []byte
 		authStr     string
 		opts        types.ImagePullOptions

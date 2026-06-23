@@ -19,17 +19,17 @@ import (
 	"runtime"
 
 	"github.com/containers/buildah/pkg/parse"
-	"github.com/containers/image/v5/types"
+	"go.podman.io/image/v5/types"
 
 	"github.com/sealerio/sealer/pkg/auth"
 
 	"github.com/BurntSushi/toml"
-	"github.com/containers/common/libimage"
-	"github.com/containers/storage"
-	"github.com/containers/storage/drivers/overlay"
-	types2 "github.com/containers/storage/types"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.podman.io/common/libimage"
+	"go.podman.io/storage"
+	"go.podman.io/storage/drivers/overlay"
+	types2 "go.podman.io/storage/types"
 
 	"github.com/sealerio/sealer/pkg/define/options"
 )

@@ -7,17 +7,17 @@ import (
 	"time"
 
 	"github.com/containers/buildah/pkg/blobcache"
-	"github.com/containers/common/libimage"
-	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/pkg/compression"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/types"
 	encconfig "github.com/containers/ocicrypt/config"
-	"github.com/containers/storage"
-	"github.com/containers/storage/pkg/archive"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
+	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/pkg/compression"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/archive"
 )
 
 // cacheLookupReferenceFunc wraps a BlobCache into a
@@ -32,7 +32,7 @@ func cacheLookupReferenceFunc(directory string, compress types.LayerCompression)
 		}
 		ref, err := blobcache.NewBlobCache(ref, directory, compress)
 		if err != nil {
-			return nil, fmt.Errorf("error using blobcache %q: %w", directory, err)
+			return nil, fmt.Errorf("using blobcache %q: %w", directory, err)
 		}
 		return ref, nil
 	}
@@ -66,6 +66,8 @@ type PushOptions struct {
 	// prebuilt copies of layer blobs that we might otherwise need to
 	// regenerate from on-disk layers, substituting them in the list of
 	// blobs to copy whenever possible.
+	//
+	// Not applicable if SourceLookupReferenceFunc is set.
 	BlobDirectory string
 	// Quiet is a boolean value that determines if minimal output to
 	// the user will be displayed, this is best used for logging.
@@ -90,11 +92,21 @@ type PushOptions struct {
 	// integers in the slice represent 0-indexed layer indices, with support for negative
 	// indexing. i.e. 0 is the first layer, -1 is the last (top-most) layer.
 	OciEncryptLayers *[]int
+	// SourceLookupReference provides a function to look up source
+	// references. Overrides BlobDirectory, if set.
+	SourceLookupReferenceFunc libimage.LookupReferenceFunc
+	// DestinationLookupReference provides a function to look up destination
+	// references.
+	DestinationLookupReferenceFunc libimage.LookupReferenceFunc
 
 	// CompressionFormat is the format to use for the compression of the blobs
 	CompressionFormat *compression.Algorithm
 	// CompressionLevel specifies what compression level is used
 	CompressionLevel *int
+	// ForceCompressionFormat ensures that the compression algorithm set in
+	// CompressionFormat is used exclusively, and blobs of other compression
+	// algorithms are not reused.
+	ForceCompressionFormat bool
 }
 
 // Push copies the contents of the image to a new location.
@@ -110,6 +122,7 @@ func Push(ctx context.Context, image string, dest types.ImageReference, options 
 	libimageOptions.OciEncryptLayers = options.OciEncryptLayers
 	libimageOptions.CompressionFormat = options.CompressionFormat
 	libimageOptions.CompressionLevel = options.CompressionLevel
+	libimageOptions.ForceCompressionFormat = options.ForceCompressionFormat
 	libimageOptions.PolicyAllowStorage = true
 
 	if options.Quiet {
@@ -120,7 +133,12 @@ func Push(ctx context.Context, image string, dest types.ImageReference, options 
 	if options.Compression == archive.Gzip {
 		compress = types.Compress
 	}
-	libimageOptions.SourceLookupReferenceFunc = cacheLookupReferenceFunc(options.BlobDirectory, compress)
+	if options.SourceLookupReferenceFunc != nil {
+		libimageOptions.SourceLookupReferenceFunc = options.SourceLookupReferenceFunc
+	} else {
+		libimageOptions.SourceLookupReferenceFunc = cacheLookupReferenceFunc(options.BlobDirectory, compress)
+	}
+	libimageOptions.DestinationLookupReferenceFunc = options.DestinationLookupReferenceFunc
 
 	runtime, err := libimage.RuntimeFromStore(options.Store, &libimage.RuntimeOptions{SystemContext: options.SystemContext})
 	if err != nil {
@@ -135,7 +153,7 @@ func Push(ctx context.Context, image string, dest types.ImageReference, options 
 
 	manifestDigest, err := manifest.Digest(manifestBytes)
 	if err != nil {
-		return nil, "", fmt.Errorf("error computing digest of manifest of new image %q: %w", transports.ImageName(dest), err)
+		return nil, "", fmt.Errorf("computing digest of manifest of new image %q: %w", transports.ImageName(dest), err)
 	}
 
 	var ref reference.Canonical

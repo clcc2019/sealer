@@ -21,8 +21,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/containers/common/pkg/auth"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/pkg/auth"
 
 	"github.com/sealerio/sealer/common"
 	containerruntime "github.com/sealerio/sealer/pkg/container-runtime"

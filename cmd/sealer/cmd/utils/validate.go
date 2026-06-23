@@ -45,7 +45,7 @@ func ValidateRunHosts(runMasters, runNodes string) error {
 	if len(errMsg) == 0 {
 		return nil
 	}
-	return fmt.Errorf(strings.Join(errMsg, ","))
+	return fmt.Errorf("%s", strings.Join(errMsg, ","))
 }
 
 func ValidateIPStr(inputStr string) error {
@@ -109,7 +109,7 @@ func ValidateScaleIPStr(masters, nodes string) error {
 	if len(errMsg) == 0 {
 		return nil
 	}
-	return fmt.Errorf(strings.Join(errMsg, ","))
+	return fmt.Errorf("%s", strings.Join(errMsg, ","))
 }
 
 // ParseToNetIPList now only supports input IP list and IP range.

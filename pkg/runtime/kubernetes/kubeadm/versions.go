@@ -2,6 +2,7 @@ package kubeadm
 
 import (
 	"fmt"
+	"strings"
 
 	versionUtils "github.com/sealerio/sealer/utils/version"
 )
@@ -15,6 +16,11 @@ const (
 )
 
 func getKubeadmAPIVersion(kubernetesVersion string) (string, error) {
+	kubernetesVersion = strings.TrimSpace(kubernetesVersion)
+	if kubernetesVersion == "" {
+		return KubeadmV1beta4, nil
+	}
+
 	kv := versionUtils.Version(kubernetesVersion)
 
 	greaterOrEqualTo122, err := kv.GreaterThan(V1220)

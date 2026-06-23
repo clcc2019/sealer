@@ -19,12 +19,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/containers/common/pkg/auth"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/sealerio/sealer/pkg/define/options"
 	"github.com/sealerio/sealer/pkg/imageengine"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.podman.io/common/pkg/auth"
 )
 
 var (

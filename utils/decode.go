@@ -52,6 +52,11 @@ var decodeCRDFuncMap = map[string]func(reader io.Reader) (interface{}, error){
 
 // DecodeCRDFromFile decode custom resource definition from file, if not found, return io.EOF error.
 func DecodeCRDFromFile(filepath string, kind string) (interface{}, error) {
+	decode, ok := decodeCRDFuncMap[kind]
+	if !ok {
+		return nil, fmt.Errorf("unsupported CRD kind %s", kind)
+	}
+
 	file, err := os.Open(path.Clean(filepath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open configfile(%s): %v", filepath, err)
@@ -61,17 +66,25 @@ func DecodeCRDFromFile(filepath string, kind string) (interface{}, error) {
 			logrus.Warnf("failed to dump config close clusterfile: %v", err)
 		}
 	}()
-	return decodeCRDFuncMap[kind](file)
+	return decode(file)
 }
 
 // DecodeCRDFromByte decode custom resource definition from byte slice, if not found, return io.EOF error.
 func DecodeCRDFromByte(data []byte, kind string) (interface{}, error) {
-	return decodeCRDFuncMap[kind](bytes.NewReader(data))
+	decode, ok := decodeCRDFuncMap[kind]
+	if !ok {
+		return nil, fmt.Errorf("unsupported CRD kind %s", kind)
+	}
+	return decode(bytes.NewReader(data))
 }
 
 // DecodeCRDFromString decode custom resource definition from string, if not found, return io.EOF error.
 func DecodeCRDFromString(data string, kind string) (interface{}, error) {
-	return decodeCRDFuncMap[kind](strings.NewReader(data))
+	decode, ok := decodeCRDFuncMap[kind]
+	if !ok {
+		return nil, fmt.Errorf("unsupported CRD kind %s", kind)
+	}
+	return decode(strings.NewReader(data))
 }
 
 func NewK8sYamlDecoder(reader io.Reader) *yaml.YAMLToJSONDecoder {
@@ -79,7 +92,7 @@ func NewK8sYamlDecoder(reader io.Reader) *yaml.YAMLToJSONDecoder {
 }
 
 func decodeCRDFromReader(decoder *yaml.YAMLToJSONDecoder, kind string,
-	unmarshalType func(version string) interface{} /*Get different constructs based on version and parse them.*/) (interface{}, error) {
+	unmarshalType func(version string) (interface{}, error) /*Get different constructs based on version and parse them.*/) (interface{}, error) {
 	for {
 		ext := runtime.RawExtension{}
 		if err := decoder.Decode(&ext); err != nil {
@@ -97,7 +110,10 @@ func decodeCRDFromReader(decoder *yaml.YAMLToJSONDecoder, kind string,
 		if metaType.Kind != kind {
 			continue
 		}
-		in := unmarshalType(metaType.APIVersion)
+		in, err := unmarshalType(metaType.APIVersion)
+		if err != nil {
+			return nil, err
+		}
 		if err := yaml.Unmarshal(ext.Raw, in); err != nil {
 			return nil, fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 		}
@@ -116,19 +132,22 @@ func DecodeV1ClusterFromFile(filepath string) (*v1.Cluster, error) {
 		}
 	}()
 
-	cluster, err := decodeCRDFromReader(NewK8sYamlDecoder(file), constants.ClusterKind, func(version string) interface{} { return &v1.Cluster{} })
+	cluster, err := decodeCRDFromReader(NewK8sYamlDecoder(file), constants.ClusterKind, func(version string) (interface{}, error) { return &v1.Cluster{}, nil })
+	if err != nil {
+		return nil, err
+	}
 	return cluster.(*v1.Cluster), err
 }
 
 func decodeClusterFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} {
+	switchVersion := func(version string) (interface{}, error) {
 		switch version {
 		case v1.GroupVersion.String():
-			return &v1.Cluster{}
+			return &v1.Cluster{}, nil
 		case v2.GroupVersion.String():
-			return &v2.Cluster{}
+			return &v2.Cluster{}, nil
 		default:
-			return &v2.Cluster{}
+			return &v2.Cluster{}, nil
 		}
 	}
 	out, err = decodeCRDFromReader(NewK8sYamlDecoder(reader), constants.ClusterKind, switchVersion)
@@ -168,7 +187,7 @@ func decodeConfigListFunc(reader io.Reader) (interface{}, error) {
 	var (
 		configs       []v1.Config
 		decoder       = NewK8sYamlDecoder(reader)
-		switchVersion = func(version string) interface{} { return &v1.Config{} }
+		switchVersion = func(version string) (interface{}, error) { return &v1.Config{}, nil }
 	)
 	for {
 		in, err := decodeCRDFromReader(decoder, constants.ConfigKind, switchVersion)
@@ -186,7 +205,7 @@ func decodePluginListFunc(reader io.Reader) (interface{}, error) {
 	var (
 		plugins       []v1.Plugin
 		decoder       = NewK8sYamlDecoder(reader)
-		switchVersion = func(version string) interface{} { return &v1.Plugin{} }
+		switchVersion = func(version string) (interface{}, error) { return &v1.Plugin{}, nil }
 	)
 
 	for {
@@ -202,41 +221,53 @@ func decodePluginListFunc(reader io.Reader) (interface{}, error) {
 }
 
 func decodeInitConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} {
-		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
-			return &kubeadmv1beta3.InitConfiguration{}
+	switchVersion := func(version string) (interface{}, error) {
+		switch version {
+		case kubeadmv1beta3.SchemeGroupVersion.String():
+			return &kubeadmv1beta3.InitConfiguration{}, nil
+		case kubeadmv1beta4.SchemeGroupVersion.String():
+			return &kubeadmv1beta4.InitConfiguration{}, nil
+		default:
+			return nil, fmt.Errorf("unsupported kubeadm %s apiVersion %s", kubeadmConstants.InitConfigurationKind, version)
 		}
-		return &kubeadmv1beta4.InitConfiguration{}
 	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.InitConfigurationKind, switchVersion)
 }
 
 func decodeJoinConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} {
-		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
-			return &kubeadmv1beta3.JoinConfiguration{}
+	switchVersion := func(version string) (interface{}, error) {
+		switch version {
+		case kubeadmv1beta3.SchemeGroupVersion.String():
+			return &kubeadmv1beta3.JoinConfiguration{}, nil
+		case kubeadmv1beta4.SchemeGroupVersion.String():
+			return &kubeadmv1beta4.JoinConfiguration{}, nil
+		default:
+			return nil, fmt.Errorf("unsupported kubeadm %s apiVersion %s", kubeadmConstants.JoinConfigurationKind, version)
 		}
-		return &kubeadmv1beta4.JoinConfiguration{}
 	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.JoinConfigurationKind, switchVersion)
 }
 
 func decodeClusterConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} {
-		if version == kubeadmv1beta3.SchemeGroupVersion.String() {
-			return &kubeadmv1beta3.ClusterConfiguration{}
+	switchVersion := func(version string) (interface{}, error) {
+		switch version {
+		case kubeadmv1beta3.SchemeGroupVersion.String():
+			return &kubeadmv1beta3.ClusterConfiguration{}, nil
+		case kubeadmv1beta4.SchemeGroupVersion.String():
+			return &kubeadmv1beta4.ClusterConfiguration{}, nil
+		default:
+			return nil, fmt.Errorf("unsupported kubeadm %s apiVersion %s", kubeadmConstants.ClusterConfigurationKind, version)
 		}
-		return &kubeadmv1beta4.ClusterConfiguration{}
 	}
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), kubeadmConstants.ClusterConfigurationKind, switchVersion)
 }
 
 func decodeKubeletConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} { return &v1beta1.KubeletConfiguration{} }
+	switchVersion := func(version string) (interface{}, error) { return &v1beta1.KubeletConfiguration{}, nil }
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), common.KubeletConfiguration, switchVersion)
 }
 
 func decodeKubeProxyConfigurationFunc(reader io.Reader) (out interface{}, err error) {
-	switchVersion := func(version string) interface{} { return &v1alpha1.KubeProxyConfiguration{} }
+	switchVersion := func(version string) (interface{}, error) { return &v1alpha1.KubeProxyConfiguration{}, nil }
 	return decodeCRDFromReader(NewK8sYamlDecoder(reader), common.KubeProxyConfiguration, switchVersion)
 }

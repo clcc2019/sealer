@@ -2,15 +2,17 @@ package buildah
 
 import (
 	"archive/tar"
+	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,23 +21,34 @@ import (
 
 	"github.com/containers/buildah/copier"
 	"github.com/containers/buildah/define"
+	"github.com/containers/buildah/internal/tmpdir"
 	"github.com/containers/buildah/pkg/chrootuser"
-	"github.com/containers/storage/pkg/fileutils"
-	"github.com/containers/storage/pkg/idtools"
+	"github.com/docker/go-connections/tlsconfig"
 	"github.com/hashicorp/go-multierror"
-	"github.com/opencontainers/runc/libcontainer/userns"
+	"github.com/moby/sys/userns"
+	digest "github.com/opencontainers/go-digest"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/pkg/retry"
+	"go.podman.io/image/v5/pkg/tlsclientconfig"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage/pkg/fileutils"
+	"go.podman.io/storage/pkg/idtools"
+	"go.podman.io/storage/pkg/regexp"
 )
 
 // AddAndCopyOptions holds options for add and copy commands.
 type AddAndCopyOptions struct {
-	//Chmod sets the access permissions of the destination content.
+	// Chmod sets the access permissions of the destination content.
 	Chmod string
 	// Chown is a spec for the user who should be given ownership over the
 	// newly-added content, potentially overriding permissions which would
 	// otherwise be set to 0:0.
 	Chown string
+	// Checksum is a standard container digest string (e.g. <algorithm>:<digest>)
+	// and is the expected hash of the content being copied.
+	Checksum string
 	// PreserveOwnership, if Chown is not set, tells us to avoid setting
 	// ownership of copied items to 0:0, instead using whatever ownership
 	// information is already set.  Not meaningful for remote sources or
@@ -70,20 +83,85 @@ type AddAndCopyOptions struct {
 	// Clear the sticky bit on items being copied.  Has no effect on
 	// archives being extracted, where the bit is always preserved.
 	StripStickyBit bool
+	// If not "", a directory containing a CA certificate (ending with
+	// ".crt"), a client certificate (ending with ".cert") and a client
+	// certificate key (ending with ".key") used when downloading sources
+	// from locations protected with TLS.
+	CertPath string
+	// Allow downloading sources from HTTPS where TLS verification fails.
+	InsecureSkipTLSVerify types.OptionalBool
+	// MaxRetries is the maximum number of attempts we'll make to retrieve
+	// contents from a remote location.
+	MaxRetries int
+	// RetryDelay is how long to wait before retrying attempts to retrieve
+	// remote contents.
+	RetryDelay time.Duration
+	// Parents specifies that we should preserve either all of the parent
+	// directories of source locations, or the ones which follow "/./" in
+	// the source paths for source locations which include such a
+	// component.
+	Parents bool
+	// Timestamp is a timestamp to override on all content as it is being read.
+	Timestamp *time.Time
+	// Link, when set to true, creates an independent layer containing the copied content
+	// that sits on top of existing layers. This layer can be cached and reused
+	// separately, and is not affected by filesystem changes from previous instructions.
+	Link bool
+	// BuildMetadata is consulted only when Link is true. Contains metadata used by
+	// imagebuildah for cache evaluation of linked layers (inheritLabels, unsetAnnotations,
+	// inheritAnnotations, newAnnotations). This field is internally managed and should
+	// not be set by external API users.
+	BuildMetadata string
 }
 
-// sourceIsRemote returns true if "source" is a remote location.
+// gitURLFragmentSuffix matches fragments to use as Git reference and build
+// context from the Git repository e.g.
+//
+//	github.com/containers/buildah.git
+//	github.com/containers/buildah.git#main
+//	github.com/containers/buildah.git#v1.35.0
+var gitURLFragmentSuffix = regexp.Delayed(`\.git(?:#.+)?$`)
+
+// sourceIsGit returns true if "source" is a git location.
+func sourceIsGit(source string) bool {
+	return isURL(source) && gitURLFragmentSuffix.MatchString(source)
+}
+
+func isURL(url string) bool {
+	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
+}
+
+// sourceIsRemote returns true if "source" is a remote location
+// and *not* a git repo. Certain github urls such as raw.github.* are allowed.
 func sourceIsRemote(source string) bool {
-	return strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
+	return isURL(source) && !gitURLFragmentSuffix.MatchString(source)
 }
 
 // getURL writes a tar archive containing the named content
-func getURL(src string, chown *idtools.IDPair, mountpoint, renameTarget string, writer io.Writer, chmod *os.FileMode) error {
+func getURL(src string, chown *idtools.IDPair, mountpoint, renameTarget string, writer io.Writer, chmod *os.FileMode, srcDigest digest.Digest, certPath string, insecureSkipTLSVerify types.OptionalBool, timestamp *time.Time) error {
 	url, err := url.Parse(src)
 	if err != nil {
 		return err
 	}
-	response, err := http.Get(src)
+	tlsClientConfig := &tls.Config{
+		// As of 2025-08, tlsconfig.ClientDefault() differs from Go 1.23 defaults only in CipherSuites;
+		// so, limit us to only using that value. If go-connections/tlsconfig changes its policy, we
+		// will want to consider that and make a decision whether to follow suit.
+		// There is some chance that eventually the Go default will be to require TLS 1.3, and that point
+		// we might want to drop the dependency on go-connections entirely.
+		CipherSuites: tlsconfig.ClientDefault().CipherSuites,
+	}
+	if err := tlsclientconfig.SetupCertificates(certPath, tlsClientConfig); err != nil {
+		return err
+	}
+	tlsClientConfig.InsecureSkipVerify = insecureSkipTLSVerify == types.OptionalBoolTrue
+
+	tr := &http.Transport{
+		TLSClientConfig: tlsClientConfig,
+		Proxy:           http.ProxyFromEnvironment,
+	}
+	httpClient := &http.Client{Transport: tr}
+	response, err := httpClient.Get(src)
 	if err != nil {
 		return err
 	}
@@ -99,37 +177,46 @@ func getURL(src string, chown *idtools.IDPair, mountpoint, renameTarget string, 
 		name = path.Base(url.Path)
 	}
 	// If there's a date on the content, use it.  If not, use the Unix epoch
-	// for compatibility.
+	// or a specified value for compatibility.
 	date := time.Unix(0, 0).UTC()
-	lastModified := response.Header.Get("Last-Modified")
-	if lastModified != "" {
-		d, err := time.Parse(time.RFC1123, lastModified)
-		if err != nil {
-			return fmt.Errorf("error parsing last-modified time: %w", err)
+	if timestamp != nil {
+		date = timestamp.UTC()
+	} else {
+		lastModified := response.Header.Get("Last-Modified")
+		if lastModified != "" {
+			d, err := time.Parse(time.RFC1123, lastModified)
+			if err != nil {
+				return fmt.Errorf("parsing last-modified time %q: %w", lastModified, err)
+			}
+			date = d.UTC()
 		}
-		date = d
 	}
 	// Figure out the size of the content.
 	size := response.ContentLength
-	responseBody := response.Body
+	var responseBody io.Reader = response.Body
 	if size < 0 {
 		// Create a temporary file and copy the content to it, so that
 		// we can figure out how much content there is.
-		f, err := ioutil.TempFile(mountpoint, "download")
+		f, err := os.CreateTemp(mountpoint, "download")
 		if err != nil {
-			return fmt.Errorf("error creating temporary file to hold %q: %w", src, err)
+			return fmt.Errorf("creating temporary file to hold %q: %w", src, err)
 		}
 		defer os.Remove(f.Name())
 		defer f.Close()
 		size, err = io.Copy(f, response.Body)
 		if err != nil {
-			return fmt.Errorf("error writing %q to temporary file %q: %w", src, f.Name(), err)
+			return fmt.Errorf("writing %q to temporary file %q: %w", src, f.Name(), err)
 		}
 		_, err = f.Seek(0, io.SeekStart)
 		if err != nil {
-			return fmt.Errorf("error setting up to read %q from temporary file %q: %w", src, f.Name(), err)
+			return fmt.Errorf("setting up to read %q from temporary file %q: %w", src, f.Name(), err)
 		}
 		responseBody = f
+	}
+	var digester digest.Digester
+	if srcDigest != "" {
+		digester = srcDigest.Algorithm().Digester()
+		responseBody = io.TeeReader(responseBody, digester.Hash())
 	}
 	// Write the output archive.  Set permissions for compatibility.
 	tw := tar.NewWriter(writer)
@@ -140,7 +227,7 @@ func getURL(src string, chown *idtools.IDPair, mountpoint, renameTarget string, 
 		uid = chown.UID
 		gid = chown.GID
 	}
-	var mode int64 = 0600
+	var mode int64 = 0o600
 	if chmod != nil {
 		mode = int64(*chmod)
 	}
@@ -155,11 +242,17 @@ func getURL(src string, chown *idtools.IDPair, mountpoint, renameTarget string, 
 	}
 	err = tw.WriteHeader(&hdr)
 	if err != nil {
-		return fmt.Errorf("error writing header: %w", err)
+		return fmt.Errorf("writing header: %w", err)
 	}
 
 	if _, err := io.Copy(tw, responseBody); err != nil {
-		return fmt.Errorf("error writing content from %q to tar stream: %w", src, err)
+		return fmt.Errorf("writing content from %q to tar stream: %w", src, err)
+	}
+
+	if digester != nil {
+		if responseDigest := digester.Digest(); responseDigest != srcDigest {
+			return fmt.Errorf("unexpected response digest for %q: %s, want %s", src, responseDigest, srcDigest)
+		}
 	}
 
 	return nil
@@ -188,6 +281,37 @@ func includeDirectoryAnyway(path string, pm *fileutils.PatternMatcher) bool {
 	return false
 }
 
+// globbedToGlobbable takes a pathname which might include the '[', *, or ?
+// characters, and converts it into a glob pattern that matches itself by
+// marking the '[' characters as _not_ the beginning of match ranges and
+// escaping the * and ? characters.
+func globbedToGlobbable(glob string) string {
+	result := glob
+	result = strings.ReplaceAll(result, "[", "[[]")
+	result = strings.ReplaceAll(result, "?", "\\?")
+	result = strings.ReplaceAll(result, "*", "\\*")
+	return result
+}
+
+// getParentsPrefixToRemoveAndParentsToSkip gets from the pattern the prefix before the "pivot point",
+// the location in the source path marked by the path component named "."
+// (i.e. where "/./" occurs in the path). And list of parents to skip.
+// In case "/./" is not present is returned "/".
+func getParentsPrefixToRemoveAndParentsToSkip(pattern string, contextDir string) (string, []string) {
+	prefix, _, found := strings.Cut(strings.TrimPrefix(pattern, contextDir), "/./")
+	if !found {
+		return string(filepath.Separator), []string{}
+	}
+	prefix = strings.TrimPrefix(filepath.Clean(string(filepath.Separator)+prefix), string(filepath.Separator))
+	out := []string{}
+	parentPath := prefix
+	for parentPath != "/" && parentPath != "." {
+		out = append(out, parentPath)
+		parentPath = filepath.Dir(parentPath)
+	}
+	return prefix, out
+}
+
 // Add copies the contents of the specified sources into the container's root
 // filesystem, optionally extracting contents of local files that look like
 // non-empty archives.
@@ -208,28 +332,41 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 		contextDir = string(os.PathSeparator)
 		currentDir, err = os.Getwd()
 		if err != nil {
-			return fmt.Errorf("error determining current working directory: %w", err)
+			return fmt.Errorf("determining current working directory: %w", err)
 		}
 	} else {
 		if !filepath.IsAbs(options.ContextDir) {
 			contextDir, err = filepath.Abs(options.ContextDir)
 			if err != nil {
-				return fmt.Errorf("error converting context directory path %q to an absolute path: %w", options.ContextDir, err)
+				return fmt.Errorf("converting context directory path %q to an absolute path: %w", options.ContextDir, err)
 			}
 		}
 	}
 
 	// Figure out what sorts of sources we have.
-	var localSources, remoteSources []string
+	var localSources, remoteSources, gitSources []string
 	for i, src := range sources {
+		if src == "" {
+			return errors.New("empty source location")
+		}
 		if sourceIsRemote(src) {
 			remoteSources = append(remoteSources, src)
+			continue
+		}
+		if sourceIsGit(src) {
+			gitSources = append(gitSources, src)
 			continue
 		}
 		if !filepath.IsAbs(src) && options.ContextDir == "" {
 			sources[i] = filepath.Join(currentDir, src)
 		}
 		localSources = append(localSources, sources[i])
+	}
+
+	// Treat git sources as a subset of remote sources
+	// differentiating only in how we fetch the two later on.
+	if len(gitSources) > 0 {
+		remoteSources = append(remoteSources, gitSources...)
 	}
 
 	// Check how many items our local source specs matched.  Each spec
@@ -263,7 +400,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 		}
 		numLocalSourceItems += len(localSourceStat.Globbed)
 	}
-	if numLocalSourceItems+len(remoteSources) == 0 {
+	if numLocalSourceItems+len(remoteSources)+len(gitSources) == 0 {
 		return fmt.Errorf("no sources %v found: %w", sources, syscall.ENOENT)
 	}
 
@@ -273,14 +410,14 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	if options.Chown != "" {
 		userUID, userGID, err = b.userForCopy(mountPoint, options.Chown)
 		if err != nil {
-			return fmt.Errorf("error looking up UID/GID for %q: %w", options.Chown, err)
+			return fmt.Errorf("looking up UID/GID for %q: %w", options.Chown, err)
 		}
 	}
 	var chmodDirsFiles *os.FileMode
 	if options.Chmod != "" {
 		p, err := strconv.ParseUint(options.Chmod, 8, 32)
 		if err != nil {
-			return fmt.Errorf("error parsing chmod %q: %w", options.Chmod, err)
+			return fmt.Errorf("parsing chmod %q: %w", options.Chmod, err)
 		}
 		perm := os.FileMode(p)
 		chmodDirsFiles = &perm
@@ -297,15 +434,17 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	// source item, or the destination has a path separator at the end of
 	// it, and it's not a remote URL, the destination needs to be a
 	// directory.
+	destMustBeDirectory := strings.HasSuffix(destination, string(os.PathSeparator)) || strings.HasSuffix(destination, string(os.PathSeparator)+".") // keep this in sync with github.com/openshift/imagebuilder.hasSlash()
+	destMustBeDirectory = destMustBeDirectory || destination == "" || (len(sources) > 1)
 	if destination == "" || !filepath.IsAbs(destination) {
 		tmpDestination := filepath.Join(string(os.PathSeparator)+b.WorkDir(), destination)
-		if destination == "" || strings.HasSuffix(destination, string(os.PathSeparator)) {
+		if destMustBeDirectory {
 			destination = tmpDestination + string(os.PathSeparator)
 		} else {
 			destination = tmpDestination
 		}
 	}
-	destMustBeDirectory := (len(sources) > 1) || strings.HasSuffix(destination, string(os.PathSeparator)) || destination == b.WorkDir()
+	destMustBeDirectory = destMustBeDirectory || (filepath.Clean(destination) == filepath.Clean(b.WorkDir()))
 	destCanBeFile := false
 	if len(sources) == 1 {
 		if len(remoteSources) == 1 {
@@ -320,6 +459,9 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 				destCanBeFile = true
 			}
 		}
+		if len(gitSources) > 0 {
+			destMustBeDirectory = true
+		}
 	}
 
 	// We care if the destination either doesn't exist, or exists and is a
@@ -332,7 +474,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	}
 	destStats, err := copier.Stat(mountPoint, filepath.Join(mountPoint, b.WorkDir()), statOptions, []string{extractDirectory})
 	if err != nil {
-		return fmt.Errorf("error checking on destination %v: %w", extractDirectory, err)
+		return fmt.Errorf("checking on destination %v: %w", extractDirectory, err)
 	}
 	if (len(destStats) == 0 || len(destStats[0].Globbed) == 0) && !destMustBeDirectory && destCanBeFile {
 		// destination doesn't exist - extract to parent and rename the incoming file to the destination's name
@@ -341,10 +483,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	}
 
 	// if the destination is a directory that doesn't yet exist, let's copy it.
-	newDestDirFound := false
-	if (len(destStats) == 1 || len(destStats[0].Globbed) == 0) && destMustBeDirectory && !destCanBeFile {
-		newDestDirFound = true
-	}
+	newDestDirFound := (len(destStats) == 1 || len(destStats[0].Globbed) == 0) && destMustBeDirectory && !destCanBeFile
 
 	if len(destStats) == 1 && len(destStats[0].Globbed) == 1 && destStats[0].Results[destStats[0].Globbed[0]].IsRegular {
 		if destMustBeDirectory {
@@ -357,7 +496,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 
 	pm, err := fileutils.NewPatternMatcher(options.Excludes)
 	if err != nil {
-		return fmt.Errorf("error processing excludes list %v: %w", options.Excludes, err)
+		return fmt.Errorf("processing excludes list %v: %w", options.Excludes, err)
 	}
 
 	// Make sure that, if it's a symlink, we'll chroot to the target of the link;
@@ -365,7 +504,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	evalOptions := copier.EvalOptions{}
 	evaluated, err := copier.Eval(mountPoint, extractDirectory, evalOptions)
 	if err != nil {
-		return fmt.Errorf("error checking on destination %v: %w", extractDirectory, err)
+		return fmt.Errorf("checking on destination %v: %w", extractDirectory, err)
 	}
 	extractDirectory = evaluated
 
@@ -376,14 +515,73 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 	}
 	destUIDMap, destGIDMap := convertRuntimeIDMaps(b.IDMappingOptions.UIDMap, b.IDMappingOptions.GIDMap)
 
-	// Create the target directory if it doesn't exist yet.
+	var putRoot, putDir, stagingDir string
+	var createdDirs []string
+	var latestTimestamp time.Time
+
 	mkdirOptions := copier.MkdirOptions{
 		UIDMap:   destUIDMap,
 		GIDMap:   destGIDMap,
 		ChownNew: chownDirs,
 	}
-	if err := copier.Mkdir(mountPoint, extractDirectory, mkdirOptions); err != nil {
-		return fmt.Errorf("error ensuring target directory exists: %w", err)
+
+	// If --link is specified, we create a staging directory to hold the content
+	// that will then become an independent layer
+	if options.Link {
+		containerDir, err := b.store.ContainerDirectory(b.ContainerID)
+		if err != nil {
+			return fmt.Errorf("getting container directory for %q: %w", b.ContainerID, err)
+		}
+
+		stagingDir, err = os.MkdirTemp(containerDir, "link-stage-")
+		if err != nil {
+			return fmt.Errorf("creating staging directory for link %q: %w", b.ContainerID, err)
+		}
+
+		putRoot = stagingDir
+
+		cleanDest := filepath.Clean(destination)
+
+		if strings.Contains(cleanDest, "..") {
+			return fmt.Errorf("invalid destination path %q: contains path traversal", destination)
+		}
+
+		if renameTarget != "" {
+			putDir = filepath.Dir(filepath.Join(stagingDir, cleanDest))
+		} else {
+			putDir = filepath.Join(stagingDir, cleanDest)
+		}
+
+		putDirAbs, err := filepath.Abs(putDir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve absolute path: %w", err)
+		}
+
+		stagingDirAbs, err := filepath.Abs(stagingDir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve staging directory absolute path: %w", err)
+		}
+
+		if !strings.HasPrefix(putDirAbs, stagingDirAbs+string(os.PathSeparator)) && putDirAbs != stagingDirAbs {
+			return fmt.Errorf("destination path %q escapes staging directory", destination)
+		}
+		if err := copier.Mkdir(putRoot, putDirAbs, mkdirOptions); err != nil {
+			return fmt.Errorf("ensuring target directory exists: %w", err)
+		}
+		tempPath := putDir
+		for tempPath != stagingDir && tempPath != filepath.Dir(tempPath) {
+			if _, err := os.Stat(tempPath); err == nil {
+				createdDirs = append(createdDirs, tempPath)
+			}
+			tempPath = filepath.Dir(tempPath)
+		}
+	} else {
+		if err := copier.Mkdir(mountPoint, extractDirectory, mkdirOptions); err != nil {
+			return fmt.Errorf("ensuring target directory exists: %w", err)
+		}
+
+		putRoot = extractDirectory
+		putDir = extractDirectory
 	}
 
 	// Copy each source in turn.
@@ -391,14 +589,57 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 		var multiErr *multierror.Error
 		var getErr, closeErr, renameErr, putErr error
 		var wg sync.WaitGroup
-		if sourceIsRemote(src) {
+		if sourceIsRemote(src) || sourceIsGit(src) {
 			pipeReader, pipeWriter := io.Pipe()
+			var srcDigest digest.Digest
+			if options.Checksum != "" {
+				srcDigest, err = digest.Parse(options.Checksum)
+				if err != nil {
+					return fmt.Errorf("invalid checksum flag: %w", err)
+				}
+			}
+
 			wg.Add(1)
-			go func() {
-				getErr = getURL(src, chownFiles, mountPoint, renameTarget, pipeWriter, chmodDirsFiles)
-				pipeWriter.Close()
-				wg.Done()
-			}()
+			if sourceIsGit(src) {
+				go func() {
+					defer wg.Done()
+					defer pipeWriter.Close()
+					var cloneDir, subdir string
+					cloneDir, subdir, getErr = define.TempDirForURL(tmpdir.GetTempDir(), "", src)
+					if getErr != nil {
+						return
+					}
+					getOptions := copier.GetOptions{
+						UIDMap:         srcUIDMap,
+						GIDMap:         srcGIDMap,
+						Excludes:       options.Excludes,
+						ExpandArchives: extract,
+						ChownDirs:      chownDirs,
+						ChmodDirs:      chmodDirsFiles,
+						ChownFiles:     chownFiles,
+						ChmodFiles:     chmodDirsFiles,
+						StripSetuidBit: options.StripSetuidBit,
+						StripSetgidBit: options.StripSetgidBit,
+						StripStickyBit: options.StripStickyBit,
+						Timestamp:      options.Timestamp,
+					}
+					writer := io.WriteCloser(pipeWriter)
+					repositoryDir := filepath.Join(cloneDir, subdir)
+					getErr = copier.Get(repositoryDir, repositoryDir, getOptions, []string{"."}, writer)
+				}()
+			} else {
+				go func() {
+					getErr = retry.IfNecessary(context.TODO(), func() error {
+						return getURL(src, chownFiles, mountPoint, renameTarget, pipeWriter, chmodDirsFiles, srcDigest, options.CertPath, options.InsecureSkipTLSVerify, options.Timestamp)
+					}, &retry.Options{
+						MaxRetry: options.MaxRetries,
+						Delay:    options.RetryDelay,
+					})
+					pipeWriter.Close()
+					wg.Done()
+				}()
+			}
+
 			wg.Add(1)
 			go func() {
 				b.ContentDigester.Start("")
@@ -419,7 +660,7 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 						ChmodFiles:    nil,
 						IgnoreDevices: userns.RunningInUserNS(),
 					}
-					putErr = copier.Put(extractDirectory, extractDirectory, putOptions, io.TeeReader(pipeReader, hasher))
+					putErr = copier.Put(putRoot, putDir, putOptions, io.TeeReader(pipeReader, hasher))
 				}
 				hashCloser.Close()
 				pipeReader.Close()
@@ -427,10 +668,10 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 			}()
 			wg.Wait()
 			if getErr != nil {
-				getErr = fmt.Errorf("error reading %q: %w", src, getErr)
+				getErr = fmt.Errorf("reading %q: %w", src, getErr)
 			}
 			if putErr != nil {
-				putErr = fmt.Errorf("error storing %q: %w", src, putErr)
+				putErr = fmt.Errorf("storing %q: %w", src, putErr)
 			}
 			multiErr = multierror.Append(getErr, putErr)
 			if multiErr != nil && multiErr.ErrorOrNil() != nil {
@@ -440,6 +681,10 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 				return multiErr.Errors[0]
 			}
 			continue
+		}
+
+		if options.Checksum != "" {
+			return fmt.Errorf("checksum flag is not supported for local sources")
 		}
 
 		// Dig out the result of running glob+stat on this source spec.
@@ -453,28 +698,29 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 		if localSourceStat == nil {
 			continue
 		}
-
 		// Iterate through every item that matched the glob.
 		itemsCopied := 0
-		for _, glob := range localSourceStat.Globbed {
-			rel, err := filepath.Rel(contextDir, glob)
-			if err != nil {
-				return fmt.Errorf("error computing path of %q relative to %q: %w", glob, contextDir, err)
+		for _, globbed := range localSourceStat.Globbed {
+			rel := globbed
+			if filepath.IsAbs(globbed) {
+				if rel, err = filepath.Rel(contextDir, globbed); err != nil {
+					return fmt.Errorf("computing path of %q relative to %q: %w", globbed, contextDir, err)
+				}
 			}
 			if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-				return fmt.Errorf("possible escaping context directory error: %q is outside of %q", glob, contextDir)
+				return fmt.Errorf("possible escaping context directory error: %q is outside of %q", globbed, contextDir)
 			}
 			// Check for dockerignore-style exclusion of this item.
 			if rel != "." {
-				excluded, err := pm.Matches(filepath.ToSlash(rel)) // nolint:staticcheck
+				excluded, err := pm.Matches(filepath.ToSlash(rel)) //nolint:staticcheck
 				if err != nil {
-					return fmt.Errorf("error checking if %q(%q) is excluded: %w", glob, rel, err)
+					return fmt.Errorf("checking if %q(%q) is excluded: %w", globbed, rel, err)
 				}
 				if excluded {
 					// non-directories that are excluded are excluded, no question, but
 					// directories can only be skipped if we don't have to allow for the
 					// possibility of finding things to include under them
-					globInfo := localSourceStat.Results[glob]
+					globInfo := localSourceStat.Results[globbed]
 					if !globInfo.IsDir || !includeDirectoryAnyway(rel, pm) {
 						continue
 					}
@@ -491,7 +737,10 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 				// due to potentially not having anything in the tarstream that we passed.
 				itemsCopied++
 			}
-			st := localSourceStat.Results[glob]
+			st := localSourceStat.Results[globbed]
+			if options.Link && st.ModTime.After(latestTimestamp) {
+				latestTimestamp = st.ModTime
+			}
 			pipeReader, pipeWriter := io.Pipe()
 			wg.Add(1)
 			go func() {
@@ -504,7 +753,26 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 						return false, false, nil
 					})
 				}
-				writer = newTarFilterer(writer, func(hdr *tar.Header) (bool, bool, io.Reader) {
+
+				if options.Parents {
+					parentsPrefixToRemove, parentsToSkip := getParentsPrefixToRemoveAndParentsToSkip(src, options.ContextDir)
+					writer = newTarFilterer(writer, func(hdr *tar.Header) (bool, bool, io.Reader) {
+						if slices.Contains(parentsToSkip, hdr.Name) && hdr.Typeflag == tar.TypeDir {
+							return true, false, nil
+						}
+						hdr.Name = strings.TrimPrefix(hdr.Name, parentsPrefixToRemove)
+						hdr.Name = strings.TrimPrefix(hdr.Name, "/")
+						if hdr.Typeflag == tar.TypeLink {
+							hdr.Linkname = strings.TrimPrefix(hdr.Linkname, parentsPrefixToRemove)
+							hdr.Linkname = strings.TrimPrefix(hdr.Linkname, "/")
+						}
+						if hdr.Name == "" {
+							return true, false, nil
+						}
+						return false, false, nil
+					})
+				}
+				writer = newTarFilterer(writer, func(_ *tar.Header) (bool, bool, io.Reader) {
 					itemsCopied++
 					return false, false, nil
 				})
@@ -520,8 +788,10 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 					StripSetuidBit: options.StripSetuidBit,
 					StripSetgidBit: options.StripSetgidBit,
 					StripStickyBit: options.StripStickyBit,
+					Parents:        options.Parents,
+					Timestamp:      options.Timestamp,
 				}
-				getErr = copier.Get(contextDir, contextDir, getOptions, []string{glob}, writer)
+				getErr = copier.Get(contextDir, contextDir, getOptions, []string{globbedToGlobbable(globbed)}, writer)
 				closeErr = writer.Close()
 				if renameTarget != "" && renamedItems > 1 {
 					renameErr = fmt.Errorf("internal error: renamed %d items when we expected to only rename 1", renamedItems)
@@ -554,24 +824,25 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 						ChmodFiles:      nil,
 						IgnoreDevices:   userns.RunningInUserNS(),
 					}
-					putErr = copier.Put(extractDirectory, extractDirectory, putOptions, io.TeeReader(pipeReader, hasher))
+					putErr = copier.Put(putRoot, putDir, putOptions, io.TeeReader(pipeReader, hasher))
 				}
 				hashCloser.Close()
 				pipeReader.Close()
 				wg.Done()
 			}()
+
 			wg.Wait()
 			if getErr != nil {
-				getErr = fmt.Errorf("error reading %q: %w", src, getErr)
+				getErr = fmt.Errorf("reading %q: %w", src, getErr)
 			}
 			if closeErr != nil {
-				closeErr = fmt.Errorf("error closing %q: %w", src, closeErr)
+				closeErr = fmt.Errorf("closing %q: %w", src, closeErr)
 			}
 			if renameErr != nil {
-				renameErr = fmt.Errorf("error renaming %q: %w", src, renameErr)
+				renameErr = fmt.Errorf("renaming %q: %w", src, renameErr)
 			}
 			if putErr != nil {
-				putErr = fmt.Errorf("error storing %q: %w", src, putErr)
+				putErr = fmt.Errorf("storing %q: %w", src, putErr)
 			}
 			multiErr = multierror.Append(getErr, closeErr, renameErr, putErr)
 			if multiErr != nil && multiErr.ErrorOrNil() != nil {
@@ -589,6 +860,58 @@ func (b *Builder) Add(destination string, extract bool, options AddAndCopyOption
 			return fmt.Errorf("no items matching glob %q copied (%d filtered out%s): %w", localSourceStat.Glob, len(localSourceStat.Globbed), excludesFile, syscall.ENOENT)
 		}
 	}
+
+	if options.Link {
+		if !latestTimestamp.IsZero() {
+			for _, dir := range createdDirs {
+				if err := os.Chtimes(dir, latestTimestamp, latestTimestamp); err != nil {
+					logrus.Warnf("failed to set timestamp on directory %q: %v", dir, err)
+				}
+			}
+		}
+		var created time.Time
+		if options.Timestamp != nil {
+			created = *options.Timestamp
+		} else if !latestTimestamp.IsZero() {
+			created = latestTimestamp
+		} else {
+			created = time.Unix(0, 0).UTC()
+		}
+
+		command := "ADD"
+		if !extract {
+			command = "COPY"
+		}
+
+		contentType, digest := b.ContentDigester.Digest()
+		summary := contentType
+		if digest != "" {
+			if summary != "" {
+				summary = summary + ":"
+			}
+			summary = summary + digest.Encoded()
+			logrus.Debugf("added content from --link %s", summary)
+		}
+
+		createdBy := "/bin/sh -c #(nop) " + command + " --link " + summary + " in " + destination + " " + options.BuildMetadata
+		history := v1.History{
+			Created:   &created,
+			CreatedBy: createdBy,
+			Comment:   b.HistoryComment(),
+		}
+
+		linkedLayer := LinkedLayer{
+			History:  history,
+			BlobPath: stagingDir,
+		}
+
+		b.AppendedLinkedLayers = append(b.AppendedLinkedLayers, linkedLayer)
+
+		if err := b.Save(); err != nil {
+			return fmt.Errorf("saving builder state after queuing linked layer: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -614,7 +937,6 @@ func (b *Builder) userForRun(mountPoint string, userspec string) (specs.User, st
 		} else {
 			u.AdditionalGids = groups
 		}
-
 	}
 	return u, homeDir, err
 }
@@ -665,8 +987,8 @@ func (b *Builder) userForCopy(mountPoint string, userspec string) (uint32, uint3
 	return owner.UID, owner.GID, nil
 }
 
-// EnsureContainerPathAs creates the specified directory owned by USER
-// with the file mode set to MODE.
+// EnsureContainerPathAs creates the specified directory if it doesn't exist,
+// setting a newly-created directory's owner to USER and its permissions to MODE.
 func (b *Builder) EnsureContainerPathAs(path, user string, mode *os.FileMode) error {
 	mountPoint, err := b.Mount(b.MountLabel)
 	if err != nil {
@@ -696,5 +1018,4 @@ func (b *Builder) EnsureContainerPathAs(path, user string, mode *os.FileMode) er
 		GIDMap:   destGIDMap,
 	}
 	return copier.Mkdir(mountPoint, filepath.Join(mountPoint, path), opts)
-
 }

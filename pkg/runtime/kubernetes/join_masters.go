@@ -75,6 +75,7 @@ func (k *Runtime) joinMasters(newMasters []net.IP, master0 net.IP, kubeadmConfig
 
 		kubeadmConfig.JoinConfiguration.Discovery.BootstrapToken = &token
 		kubeadmConfig.JoinConfiguration.Discovery.BootstrapToken.APIServerEndpoint = vs
+		kubeadmConfig.JoinConfiguration.Discovery.TLSBootstrapToken = token.Token
 		kubeadmConfig.JoinConfiguration.ControlPlane.LocalAPIEndpoint.AdvertiseAddress = m.String()
 		kubeadmConfig.JoinConfiguration.ControlPlane.LocalAPIEndpoint.BindPort = int32(6443)
 		kubeadmConfig.JoinConfiguration.ControlPlane.CertificateKey = certKey

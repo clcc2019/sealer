@@ -20,22 +20,22 @@ import (
 	"os"
 	"strings"
 
-	"github.com/containers/storage"
 	"github.com/pkg/errors"
+	"go.podman.io/storage"
 
 	"github.com/containers/buildah/util"
-	"github.com/containers/common/libimage"
-	"github.com/containers/common/libimage/manifests"
-	cp "github.com/containers/image/v5/copy"
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/image/v5/types"
 	"github.com/hashicorp/go-multierror"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sealerio/sealer/pkg/define/options"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
+	libimagedefine "go.podman.io/common/libimage/define"
+	"go.podman.io/common/libimage/manifests"
+	cp "go.podman.io/image/v5/copy"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/transports/alltransports"
 )
 
 func (engine *Engine) LookupManifest(name string) (*libimage.ManifestList, error) {
@@ -78,7 +78,7 @@ func (engine *Engine) DeleteManifests(names []string, opts *options.ManifestDele
 	return multiE.ErrorOrNil()
 }
 
-func (engine *Engine) InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimage.ManifestListData, error) {
+func (engine *Engine) InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimagedefine.ManifestListData, error) {
 	runtime := engine.ImageRuntime()
 
 	// attempt to resolve the manifest list locally.
@@ -93,9 +93,7 @@ func (engine *Engine) InspectManifest(name string, opts *options.ManifestInspect
 func (engine *Engine) PushManifest(name, destSpec string, opts *options.PushOptions) error {
 	runtime := engine.ImageRuntime()
 	store := engine.ImageStore()
-	systemCxt := engine.SystemContext()
-	systemCxt.OCIInsecureSkipTLSVerify = opts.SkipTLSVerify
-	systemCxt.DockerInsecureSkipTLSVerify = types.NewOptionalBool(opts.SkipTLSVerify)
+	systemCxt := pushSystemContext(engine.SystemContext(), opts.SkipTLSVerify)
 
 	manifestList, err := runtime.LookupManifestList(name)
 	if err != nil {
@@ -153,6 +151,11 @@ func (engine *Engine) PushManifest(name, destSpec string, opts *options.PushOpti
 	}
 
 	_, _, err = list.Push(getContext(), dest, pushOptions)
+	if shouldRetryPushInsecure(err, opts.SkipTLSVerify) {
+		logrus.Warnf("push manifest to %q failed with TLS/HTTPS error, retrying with TLS verification disabled: %v", destSpec, err)
+		pushOptions.SystemContext = pushSystemContext(engine.SystemContext(), true)
+		_, _, err = list.Push(getContext(), dest, pushOptions)
+	}
 
 	if err == nil && opts.Rm {
 		_, err = store.DeleteImage(manifestList.ID(), true)

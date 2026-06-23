@@ -19,8 +19,8 @@ import (
 
 	"github.com/sealerio/sealer/pkg/define/options"
 
-	"github.com/containers/common/libimage"
 	"github.com/pkg/errors"
+	"go.podman.io/common/libimage"
 )
 
 func (engine *Engine) Tag(opts *options.TagOptions) error {

@@ -21,28 +21,26 @@ import (
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/util"
-	"github.com/containers/common/libimage"
-	"github.com/containers/common/pkg/auth"
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/image/v5/types"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sealerio/sealer/pkg/define/options"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
+	"go.podman.io/common/pkg/auth"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/transports/alltransports"
+	"go.podman.io/image/v5/types"
 )
 
 func (engine *Engine) Push(opts *options.PushOptions) error {
 	if len(opts.Image) == 0 {
 		return errors.New("At least a source image ID must be specified")
 	}
-	systemCxt := engine.SystemContext()
+	systemCxt := pushSystemContext(engine.SystemContext(), opts.SkipTLSVerify)
 	if err := auth.CheckAuthFile(systemCxt.AuthFilePath); err != nil {
 		return err
 	}
-	systemCxt.OCIInsecureSkipTLSVerify = opts.SkipTLSVerify
-	systemCxt.DockerInsecureSkipTLSVerify = types.NewOptionalBool(opts.SkipTLSVerify)
 
 	src, destSpec := opts.Image, opts.Image
 	if len(opts.Destination) != 0 {
@@ -116,6 +114,11 @@ func (engine *Engine) Push(opts *options.PushOptions) error {
 		options.ReportWriter = os.Stderr
 	}
 	ref, digest, err := buildah.Push(getContext(), src, dest, options)
+	if shouldRetryPushInsecure(err, opts.SkipTLSVerify) {
+		logrus.Warnf("push to %q failed with TLS/HTTPS error, retrying with TLS verification disabled: %v", destSpec, err)
+		options.SystemContext = pushSystemContext(engine.SystemContext(), true)
+		ref, digest, err = buildah.Push(getContext(), src, dest, options)
+	}
 	if err != nil {
 		return util.GetFailureCause(err, errors.Wrapf(err, "error pushing image %q to %q", src, destSpec))
 	}
@@ -128,4 +131,36 @@ func (engine *Engine) Push(opts *options.PushOptions) error {
 	logrus.Infof("successfully pushed %s with digest %s", transports.ImageName(dest), digest.String())
 
 	return nil
+}
+
+func pushSystemContext(base *types.SystemContext, skipTLSVerify bool) *types.SystemContext {
+	if base == nil {
+		base = &types.SystemContext{}
+	}
+	systemCxt := *base
+	systemCxt.OCIInsecureSkipTLSVerify = skipTLSVerify
+	systemCxt.DockerInsecureSkipTLSVerify = types.NewOptionalBool(skipTLSVerify)
+	return &systemCxt
+}
+
+func shouldRetryPushInsecure(err error, skipTLSVerify bool) bool {
+	if err == nil || skipTLSVerify {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	for _, indicator := range []string{
+		"server gave http response to https client",
+		"first record does not look like a tls handshake",
+		"certificate signed by unknown authority",
+		"certificate is not trusted",
+		"cannot validate certificate",
+		"x509:",
+		"tls:",
+	} {
+		if strings.Contains(msg, indicator) {
+			return true
+		}
+	}
+	return false
 }

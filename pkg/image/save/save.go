@@ -28,7 +28,7 @@ import (
 	"github.com/distribution/distribution/v3/registry/storage"
 	"github.com/distribution/distribution/v3/registry/storage/driver/factory"
 	dockerstreams "github.com/docker/cli/cli/streams"
-	"github.com/docker/docker/api/types"
+	registrytypes "github.com/docker/docker/api/types/registry"
 	dockerjsonmessage "github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/progress"
 	"github.com/docker/docker/pkg/streamformatter"
@@ -550,7 +550,7 @@ func NewProxyRegistry(ctx context.Context, rootdir, domain string) (distribution
 	if err != nil {
 		return nil, fmt.Errorf("failed to read default auth file: %v", err)
 	}
-	defaultAuth := types.AuthConfig{ServerAddress: domain}
+	defaultAuth := registrytypes.AuthConfig{ServerAddress: domain}
 	authConfig, err := svc.GetAuthByDomain(domain)
 	//ignore err when is there is no username and password.
 	//regard it as a public registry

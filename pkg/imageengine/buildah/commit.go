@@ -21,13 +21,13 @@ import (
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/util"
-	"github.com/containers/image/v5/pkg/shortnames"
-	storageTransport "github.com/containers/image/v5/storage"
-	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/storage"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/image/v5/pkg/shortnames"
+	storageTransport "go.podman.io/image/v5/storage"
+	"go.podman.io/image/v5/transports/alltransports"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
 
 	"github.com/sealerio/sealer/pkg/define/options"
 )

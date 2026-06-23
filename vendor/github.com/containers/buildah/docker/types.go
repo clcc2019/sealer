@@ -7,8 +7,8 @@ package docker
 import (
 	"time"
 
-	"github.com/containers/image/v5/pkg/strslice"
 	digest "github.com/opencontainers/go-digest"
+	"go.podman.io/image/v5/pkg/strslice"
 )
 
 // github.com/moby/moby/image/rootfs.go
@@ -60,9 +60,10 @@ type HealthConfig struct {
 	Test []string `json:",omitempty"`
 
 	// Zero means to inherit. Durations are expressed as integer nanoseconds.
-	Interval    time.Duration `json:",omitempty"` // Interval is the time to wait between checks.
-	Timeout     time.Duration `json:",omitempty"` // Timeout is the time to wait before considering the check to have hung.
-	StartPeriod time.Duration `json:",omitempty"` // Time to wait after the container starts before running the first check.
+	Interval      time.Duration `json:",omitempty"` // Interval is the time to wait between checks.
+	Timeout       time.Duration `json:",omitempty"` // Timeout is the time to wait before considering the check to have hung.
+	StartPeriod   time.Duration `json:",omitempty"` // Time to wait after the container starts before running the first check.
+	StartInterval time.Duration `json:",omitempty"` // Time to wait between checks during the StartPeriod.
 
 	// Retries is the number of consecutive failures needed to consider a container as unhealthy.
 	// Zero means inherit.
@@ -123,7 +124,7 @@ type V1Compatibility struct {
 	Created         time.Time `json:"created"`
 	ContainerConfig struct {
 		Cmd []string
-	} `json:"container_config,omitempty"`
+	} `json:"container_config"`
 	Author    string `json:"author,omitempty"`
 	ThrowAway bool   `json:"throwaway,omitempty"`
 }
@@ -142,7 +143,7 @@ type V1Image struct {
 	// Container is the id of the container used to commit
 	Container string `json:"container,omitempty"`
 	// ContainerConfig is the configuration of the container that is committed into the image
-	ContainerConfig Config `json:"container_config,omitempty"`
+	ContainerConfig Config `json:"container_config"`
 	// DockerVersion specifies the version of Docker that was used to build the image
 	DockerVersion string `json:"docker_version,omitempty"`
 	// Author is the name of the author that was specified when committing the image
@@ -163,7 +164,7 @@ type V1Image struct {
 // V2Image stores the image configuration
 type V2Image struct {
 	V1Image
-	Parent     ID            `json:"parent,omitempty"` // nolint:govet
+	Parent     ID            `json:"parent,omitempty"`
 	RootFS     *V2S2RootFS   `json:"rootfs,omitempty"`
 	History    []V2S2History `json:"history,omitempty"`
 	OSVersion  string        `json:"os.version,omitempty"`

@@ -26,12 +26,11 @@ import (
 
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/pkg/parse"
-	"github.com/containers/common/pkg/umask"
-	is "github.com/containers/image/v5/storage"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/storage"
-	"github.com/containers/storage/pkg/unshare"
 	"github.com/pkg/errors"
+	"go.podman.io/common/pkg/umask"
+	is "go.podman.io/image/v5/storage"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
 )
 
 const (
@@ -48,7 +47,7 @@ const (
 )
 
 func getStore(configurations *options.EngineGlobalConfigurations) (storage.Store, error) {
-	options, err := storage.DefaultStoreOptions(unshare.IsRootless(), unshare.GetRootlessUID())
+	options, err := storage.DefaultStoreOptions()
 	if err != nil {
 		return nil, err
 	}

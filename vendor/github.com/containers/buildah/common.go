@@ -2,20 +2,22 @@ package buildah
 
 import (
 	"context"
+	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/containers/buildah/define"
-	"github.com/containers/common/pkg/retry"
-	cp "github.com/containers/image/v5/copy"
-	"github.com/containers/image/v5/docker"
-	"github.com/containers/image/v5/signature"
-	"github.com/containers/image/v5/types"
 	encconfig "github.com/containers/ocicrypt/config"
-	"github.com/containers/storage"
-	"github.com/containers/storage/pkg/unshare"
+	"go.podman.io/common/pkg/retry"
+	cp "go.podman.io/image/v5/copy"
+	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/signature"
+	is "go.podman.io/image/v5/storage"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/fileutils"
+	"go.podman.io/storage/pkg/unshare"
 )
 
 const (
@@ -25,7 +27,7 @@ const (
 	DOCKER = define.DOCKER
 )
 
-func getCopyOptions(store storage.Store, reportWriter io.Writer, sourceSystemContext *types.SystemContext, destinationSystemContext *types.SystemContext, manifestType string, removeSignatures bool, addSigner string, ociEncryptLayers *[]int, ociEncryptConfig *encconfig.EncryptConfig, ociDecryptConfig *encconfig.DecryptConfig) *cp.Options {
+func getCopyOptions(store storage.Store, reportWriter io.Writer, sourceSystemContext *types.SystemContext, destinationSystemContext *types.SystemContext, manifestType string, removeSignatures bool, addSigner string, ociEncryptLayers *[]int, ociEncryptConfig *encconfig.EncryptConfig, ociDecryptConfig *encconfig.DecryptConfig, destinationTimestamp *time.Time) *cp.Options {
 	sourceCtx := getSystemContext(store, nil, "")
 	if sourceSystemContext != nil {
 		*sourceCtx = *sourceSystemContext
@@ -45,6 +47,7 @@ func getCopyOptions(store storage.Store, reportWriter io.Writer, sourceSystemCon
 		OciEncryptConfig:      ociEncryptConfig,
 		OciDecryptConfig:      ociDecryptConfig,
 		OciEncryptLayers:      ociEncryptLayers,
+		DestinationTimestamp:  destinationTimestamp,
 	}
 }
 
@@ -59,7 +62,7 @@ func getSystemContext(store storage.Store, defaults *types.SystemContext, signat
 	if store != nil {
 		if sc.SystemRegistriesConfPath == "" && unshare.IsRootless() {
 			userRegistriesFile := filepath.Join(store.GraphRoot(), "registries.conf")
-			if _, err := os.Stat(userRegistriesFile); err == nil {
+			if err := fileutils.Exists(userRegistriesFile); err == nil {
 				sc.SystemRegistriesConfPath = userRegistriesFile
 			}
 		}
@@ -67,22 +70,31 @@ func getSystemContext(store storage.Store, defaults *types.SystemContext, signat
 	return sc
 }
 
-func retryCopyImage(ctx context.Context, policyContext *signature.PolicyContext, dest, src, registry types.ImageReference, copyOptions *cp.Options, maxRetries int, retryDelay time.Duration) ([]byte, error) {
+func retryCopyImage(ctx context.Context, policyContext *signature.PolicyContext, maybeWrappedDest, maybeWrappedSrc, directDest types.ImageReference, copyOptions *cp.Options, maxRetries int, retryDelay time.Duration) ([]byte, error) {
+	return retryCopyImageWithOptions(ctx, policyContext, maybeWrappedDest, maybeWrappedSrc, directDest, copyOptions, maxRetries, retryDelay, true)
+}
+
+func retryCopyImageWithOptions(ctx context.Context, policyContext *signature.PolicyContext, maybeWrappedDest, maybeWrappedSrc, directDest types.ImageReference, copyOptions *cp.Options, maxRetries int, retryDelay time.Duration, retryOnLayerUnknown bool) ([]byte, error) {
 	var (
 		manifestBytes []byte
 		err           error
-		lastErr       error
 	)
-	err = retry.RetryIfNecessary(ctx, func() error {
-		manifestBytes, err = cp.Image(ctx, policyContext, dest, src, copyOptions)
-		if registry != nil && registry.Transport().Name() != docker.Transport.Name() {
-			lastErr = err
-			return nil
-		}
+	err = retry.IfNecessary(ctx, func() error {
+		manifestBytes, err = cp.Image(ctx, policyContext, maybeWrappedDest, maybeWrappedSrc, copyOptions)
 		return err
-	}, &retry.RetryOptions{MaxRetry: maxRetries, Delay: retryDelay})
-	if lastErr != nil {
-		err = lastErr
-	}
+	}, &retry.RetryOptions{MaxRetry: maxRetries, Delay: retryDelay, IsErrorRetryable: func(err error) bool {
+		if retryOnLayerUnknown && directDest.Transport().Name() == is.Transport.Name() && errors.Is(err, storage.ErrLayerUnknown) {
+			// we were trying to reuse a layer that belonged to an
+			// image that was deleted at just the right (worst
+			// possible) time? yeah, try again
+			return true
+		}
+		if directDest.Transport().Name() != docker.Transport.Name() {
+			// if we're not talking to a registry, then nah
+			return false
+		}
+		// hand it off to the default should-this-be-retried logic
+		return retry.IsErrorRetryable(err)
+	}})
 	return manifestBytes, err
 }

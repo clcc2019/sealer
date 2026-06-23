@@ -21,8 +21,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/containers/common/libimage"
-	"github.com/containers/common/libimage/manifests"
 	"github.com/pkg/errors"
 	"github.com/sealerio/sealer/common"
 	"github.com/sealerio/sealer/pkg/define/options"
@@ -30,6 +28,8 @@ import (
 	osi "github.com/sealerio/sealer/utils/os"
 	"github.com/sealerio/sealer/utils/os/fs"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
+	"go.podman.io/common/libimage/manifests"
 )
 
 // Save image as tar file, if image is multi-arch image, will save all its instances and manifest name as tar file.

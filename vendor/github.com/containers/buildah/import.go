@@ -8,21 +8,21 @@ import (
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/docker"
 	"github.com/containers/buildah/util"
-	"github.com/containers/image/v5/image"
-	"github.com/containers/image/v5/manifest"
-	is "github.com/containers/image/v5/storage"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/storage"
 	digest "github.com/opencontainers/go-digest"
+	"go.podman.io/image/v5/image"
+	"go.podman.io/image/v5/manifest"
+	is "go.podman.io/image/v5/storage"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
 )
 
 func importBuilderDataFromImage(ctx context.Context, store storage.Store, systemContext *types.SystemContext, imageID, containerName, containerID string) (*Builder, error) {
 	if imageID == "" {
-		return nil, errors.New("Internal error: imageID is empty in importBuilderDataFromImage")
+		return nil, errors.New("internal error: imageID is empty in importBuilderDataFromImage")
 	}
 
-	storeopts, err := storage.DefaultStoreOptions(false, 0)
+	storeopts, err := storage.DefaultStoreOptions()
 	if err != nil {
 		return nil, err
 	}
@@ -34,35 +34,38 @@ func importBuilderDataFromImage(ctx context.Context, store storage.Store, system
 	}
 	src, err := ref.NewImageSource(ctx, systemContext)
 	if err != nil {
-		return nil, fmt.Errorf("error instantiating image source: %w", err)
+		return nil, fmt.Errorf("instantiating image source: %w", err)
 	}
 	defer src.Close()
 
 	imageDigest := ""
-	manifestBytes, manifestType, err := src.GetManifest(ctx, nil)
+	unparsedTop := image.UnparsedInstance(src, nil)
+	manifestBytes, manifestType, err := unparsedTop.Manifest(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error loading image manifest for %q: %w", transports.ImageName(ref), err)
+		return nil, fmt.Errorf("loading image manifest for %q: %w", transports.ImageName(ref), err)
 	}
 	if manifestDigest, err := manifest.Digest(manifestBytes); err == nil {
 		imageDigest = manifestDigest.String()
 	}
 
 	var instanceDigest *digest.Digest
+	unparsedInstance := unparsedTop // for instanceDigest
 	if manifest.MIMETypeIsMultiImage(manifestType) {
 		list, err := manifest.ListFromBlob(manifestBytes, manifestType)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing image manifest for %q as list: %w", transports.ImageName(ref), err)
+			return nil, fmt.Errorf("parsing image manifest for %q as list: %w", transports.ImageName(ref), err)
 		}
 		instance, err := list.ChooseInstance(systemContext)
 		if err != nil {
-			return nil, fmt.Errorf("error finding an appropriate image in manifest list %q: %w", transports.ImageName(ref), err)
+			return nil, fmt.Errorf("finding an appropriate image in manifest list %q: %w", transports.ImageName(ref), err)
 		}
 		instanceDigest = &instance
+		unparsedInstance = image.UnparsedInstance(src, instanceDigest)
 	}
 
-	image, err := image.FromUnparsedImage(ctx, systemContext, image.UnparsedInstance(src, instanceDigest))
+	image, err := image.FromUnparsedImage(ctx, systemContext, unparsedInstance)
 	if err != nil {
-		return nil, fmt.Errorf("error instantiating image for %q instance %q: %w", transports.ImageName(ref), instanceDigest, err)
+		return nil, fmt.Errorf("instantiating image for %q instance %q: %w", transports.ImageName(ref), instanceDigest, err)
 	}
 
 	imageName := ""
@@ -73,7 +76,7 @@ func importBuilderDataFromImage(ctx context.Context, store storage.Store, system
 		if img.TopLayer != "" {
 			layer, err4 := store.Layer(img.TopLayer)
 			if err4 != nil {
-				return nil, fmt.Errorf("error reading information about image's top layer: %w", err4)
+				return nil, fmt.Errorf("reading information about image's top layer: %w", err4)
 			}
 			uidmap, gidmap = convertStorageIDMaps(layer.UIDMap, layer.GIDMap)
 		}
@@ -97,7 +100,6 @@ func importBuilderDataFromImage(ctx context.Context, store storage.Store, system
 		FromImageDigest:  imageDigest,
 		Container:        containerName,
 		ContainerID:      containerID,
-		ImageAnnotations: map[string]string{},
 		ImageCreatedBy:   "",
 		NamespaceOptions: defaultNamespaceOptions,
 		IDMappingOptions: define.IDMappingOptions{
@@ -107,10 +109,11 @@ func importBuilderDataFromImage(ctx context.Context, store storage.Store, system
 			GIDMap:         gidmap,
 		},
 		NetworkInterface: netInt,
+		CommonBuildOpts:  &CommonBuildOptions{},
 	}
 
-	if err := builder.initConfig(ctx, image, systemContext); err != nil {
-		return nil, fmt.Errorf("error preparing image configuration: %w", err)
+	if err := builder.initConfig(ctx, systemContext, image, nil); err != nil {
+		return nil, fmt.Errorf("preparing image configuration: %w", err)
 	}
 
 	return builder, nil
@@ -147,7 +150,7 @@ func importBuilder(ctx context.Context, store storage.Store, options ImportOptio
 
 	err = builder.Save()
 	if err != nil {
-		return nil, fmt.Errorf("error saving builder state: %w", err)
+		return nil, fmt.Errorf("saving builder state: %w", err)
 	}
 
 	return builder, nil
@@ -167,7 +170,7 @@ func importBuilderFromImage(ctx context.Context, store storage.Store, options Im
 
 	builder, err := importBuilderDataFromImage(ctx, store, systemContext, img.ID, "", "")
 	if err != nil {
-		return nil, fmt.Errorf("error importing build settings from image %q: %w", options.Image, err)
+		return nil, fmt.Errorf("importing build settings from image %q: %w", options.Image, err)
 	}
 
 	builder.setupLogger()

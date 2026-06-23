@@ -17,9 +17,11 @@ package kubeadm
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 
 	"github.com/sealerio/sealer/utils"
 	"github.com/sealerio/sealer/utils/yaml"
@@ -222,4 +224,61 @@ func TestKubeadmConfig_LoadFromClusterfile(t *testing.T) {
 			fmt.Println(string(out))
 		})
 	}
+}
+
+func TestNewKubeadmConfigRequiresMaster(t *testing.T) {
+	_, err := NewKubeadmConfig(KubeadmConfig{}, "", nil, "apiserver.cluster.local", "systemd", "registry.local", nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "at least one master is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestKubeadmConfigMergeExtraArgsByName(t *testing.T) {
+	dst := KubeadmConfig{}
+	dst.ClusterConfiguration.ControllerManager.ExtraArgs = []kubeadmv1beta4.Arg{
+		{Name: "cluster-signing-duration", Value: "876000h"},
+		{Name: "bind-address", Value: "0.0.0.0"},
+	}
+	dst.ClusterConfiguration.Scheduler.ExtraArgs = []kubeadmv1beta4.Arg{
+		{Name: "bind-address", Value: "0.0.0.0"},
+	}
+
+	src := KubeadmConfig{}
+	src.ClusterConfiguration.ControllerManager.ExtraArgs = []kubeadmv1beta4.Arg{
+		{Name: "feature-gates", Value: "EventedPLEG=true"},
+		{Name: "bind-address", Value: "127.0.0.1"},
+		{Name: "tls-cipher-suites", Value: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+	}
+	src.ClusterConfiguration.Scheduler.ExtraArgs = []kubeadmv1beta4.Arg{
+		{Name: "feature-gates", Value: "EventedPLEG=true"},
+		{Name: "bind-address", Value: "127.0.0.1"},
+	}
+
+	if err := mergeKubeadmConfig(&dst, src); err != nil {
+		t.Fatalf("mergeKubeadmConfig: %v", err)
+	}
+
+	assertArgValue(t, dst.ClusterConfiguration.ControllerManager.ExtraArgs, "bind-address", "0.0.0.0")
+	assertArgValue(t, dst.ClusterConfiguration.ControllerManager.ExtraArgs, "feature-gates", "EventedPLEG=true")
+	assertArgValue(t, dst.ClusterConfiguration.ControllerManager.ExtraArgs, "tls-cipher-suites", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")
+	assertArgValue(t, dst.ClusterConfiguration.Scheduler.ExtraArgs, "bind-address", "0.0.0.0")
+	assertArgValue(t, dst.ClusterConfiguration.Scheduler.ExtraArgs, "feature-gates", "EventedPLEG=true")
+}
+
+func assertArgValue(t *testing.T, args []kubeadmv1beta4.Arg, name, value string) {
+	t.Helper()
+
+	for _, arg := range args {
+		if arg.Name == name {
+			if arg.Value != value {
+				t.Fatalf("arg %q value = %q, want %q; args=%#v", name, arg.Value, value, args)
+			}
+			return
+		}
+	}
+
+	t.Fatalf("arg %q not found in %#v", name, args)
 }

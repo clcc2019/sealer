@@ -24,8 +24,8 @@ import (
 	"github.com/containers/buildah/define"
 	buildahcli "github.com/containers/buildah/pkg/cli"
 	"github.com/containers/buildah/pkg/parse"
-	"github.com/containers/common/pkg/config"
 	encconfig "github.com/containers/ocicrypt/config"
+	"go.podman.io/common/pkg/config"
 
 	"github.com/pkg/errors"
 
@@ -89,7 +89,7 @@ func (engine *Engine) createContainerFromImage(opts *options.FromOptions) (strin
 		return "", err
 	}
 
-	commonOpts.Ulimit = append(defaultContainerConfig.Containers.DefaultUlimits, commonOpts.Ulimit...)
+	commonOpts.Ulimit = append(defaultContainerConfig.Containers.DefaultUlimits.Get(), commonOpts.Ulimit...)
 
 	options := buildah.BuilderOptions{
 		FromImage:             opts.Image,

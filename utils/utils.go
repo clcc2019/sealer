@@ -40,7 +40,7 @@ func ConfirmOperation(promptInfo string) (bool, error) {
 	var noRx = regexp.MustCompile("^(?:n(?:o)?)$")
 	var input string
 	for {
-		fmt.Printf(promptInfo + " Yes [y/yes], No [n/no] : ")
+		fmt.Printf("%s Yes [y/yes], No [n/no] : ", promptInfo)
 		_, err := fmt.Scanln(&input)
 		if err != nil {
 			return false, err

@@ -1,8 +1,10 @@
-![buildah logo](https://cdn.rawgit.com/containers/buildah/main/logos/buildah-logo_large.png)
+![buildah logo (light)](logos/buildah-logo_large.png#gh-light-mode-only)
+![buildah logo (dark)](logos/buildah-logo_reverse_large.png#gh-dark-mode-only)
 
 # [Buildah](https://www.youtube.com/embed/YVk5NgSiUw8) - a tool that facilitates building [Open Container Initiative (OCI)](https://www.opencontainers.org/) container images
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/containers/buildah)](https://goreportcard.com/report/github.com/containers/buildah)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/10579/badge)](https://www.bestpractices.dev/projects/10579)
 
 
 The Buildah package provides a command line tool that can be used to
@@ -18,6 +20,8 @@ The Buildah package provides a command line tool that can be used to
 ## Buildah Information for Developers
 
 For blogs, release announcements and more, please checkout the [buildah.io](https://buildah.io) website!
+
+**[Buildah Container Images](https://github.com/containers/image_build/blob/main/buildah/README.md)**
 
 **[Buildah Demos](demos)**
 
@@ -99,7 +103,7 @@ buildah commit "$ctr1" "${2:-$USER/lighttpd}"
 EOF
 
 $ chmod +x lighttpd.sh
-$ sudo ./lighttpd.sh
+$ ./lighttpd.sh
 ```
 
 ## Commands

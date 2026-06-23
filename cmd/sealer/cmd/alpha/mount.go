@@ -19,10 +19,10 @@ import (
 	"strings"
 
 	"github.com/containers/buildah"
-	"github.com/containers/storage"
 	"github.com/olekukonko/tablewriter"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.podman.io/storage"
 
 	"github.com/sealerio/sealer/common"
 	"github.com/sealerio/sealer/pkg/define/options"

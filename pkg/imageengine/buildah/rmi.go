@@ -17,10 +17,10 @@ package buildah
 import (
 	"context"
 
-	"github.com/containers/common/libimage"
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
 
 	"github.com/sealerio/sealer/pkg/define/options"
 )

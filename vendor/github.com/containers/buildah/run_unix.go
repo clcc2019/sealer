@@ -1,5 +1,4 @@
 //go:build darwin
-// +build darwin
 
 package buildah
 
@@ -7,9 +6,9 @@ import (
 	"errors"
 
 	"github.com/containers/buildah/define"
-	nettypes "github.com/containers/common/libnetwork/types"
-	"github.com/containers/storage"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	nettypes "go.podman.io/common/libnetwork/types"
+	"go.podman.io/storage"
 )
 
 // ContainerDevices is an alias for a slice of github.com/opencontainers/runc/libcontainer/configs.Device structures.
@@ -24,6 +23,7 @@ func runUsingRuntimeMain() {}
 func (b *Builder) Run(command []string, options RunOptions) error {
 	return errors.New("function not supported on non-linux systems")
 }
+
 func DefaultNamespaceOptions() (NamespaceOptions, error) {
 	options := NamespaceOptions{
 		{Name: string(specs.CgroupNamespace), Host: false},

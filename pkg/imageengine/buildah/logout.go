@@ -15,7 +15,7 @@
 package buildah
 
 import (
-	"github.com/containers/common/pkg/auth"
+	"go.podman.io/common/pkg/auth"
 
 	"github.com/sealerio/sealer/pkg/define/options"
 

@@ -140,54 +140,63 @@ func decodeClusterFile(reader io.Reader, clusterfile *ClusterFile) error {
 			clusterfile.app = &app
 		case kubeadmConstants.InitConfigurationKind:
 			var normalizeErr error
-			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+			switch metaType.APIVersion {
+			case kubeadmv1beta3.SchemeGroupVersion.String():
 				var in kubeadmv1beta3.InitConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.InitConfiguration, normalizeErr = sealerkubeadm.NormalizeInitConfiguration(&in)
-			} else {
+			case kubeadmv1beta4.SchemeGroupVersion.String():
 				var in kubeadmv1beta4.InitConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.InitConfiguration, normalizeErr = sealerkubeadm.NormalizeInitConfiguration(&in)
+			default:
+				return fmt.Errorf("unsupported kubeadm %s apiVersion %s", metaType.Kind, metaType.APIVersion)
 			}
 			if normalizeErr != nil {
 				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)
 			}
 		case kubeadmConstants.JoinConfigurationKind:
 			var normalizeErr error
-			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+			switch metaType.APIVersion {
+			case kubeadmv1beta3.SchemeGroupVersion.String():
 				var in kubeadmv1beta3.JoinConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.JoinConfiguration, normalizeErr = sealerkubeadm.NormalizeJoinConfiguration(&in)
-			} else {
+			case kubeadmv1beta4.SchemeGroupVersion.String():
 				var in kubeadmv1beta4.JoinConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.JoinConfiguration, normalizeErr = sealerkubeadm.NormalizeJoinConfiguration(&in)
+			default:
+				return fmt.Errorf("unsupported kubeadm %s apiVersion %s", metaType.Kind, metaType.APIVersion)
 			}
 			if normalizeErr != nil {
 				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)
 			}
 		case kubeadmConstants.ClusterConfigurationKind:
 			var normalizeErr error
-			if metaType.APIVersion == kubeadmv1beta3.SchemeGroupVersion.String() {
+			switch metaType.APIVersion {
+			case kubeadmv1beta3.SchemeGroupVersion.String():
 				var in kubeadmv1beta3.ClusterConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.ClusterConfiguration, normalizeErr = sealerkubeadm.NormalizeClusterConfiguration(&in)
-			} else {
+			case kubeadmv1beta4.SchemeGroupVersion.String():
 				var in kubeadmv1beta4.ClusterConfiguration
 				if err := yaml.Unmarshal(ext.Raw, &in); err != nil {
 					return fmt.Errorf("failed to decode %s[%s]: %v", metaType.Kind, metaType.APIVersion, err)
 				}
 				clusterfile.kubeadmConfig.ClusterConfiguration, normalizeErr = sealerkubeadm.NormalizeClusterConfiguration(&in)
+			default:
+				return fmt.Errorf("unsupported kubeadm %s apiVersion %s", metaType.Kind, metaType.APIVersion)
 			}
 			if normalizeErr != nil {
 				return fmt.Errorf("failed to normalize %s[%s]: %v", metaType.Kind, metaType.APIVersion, normalizeErr)

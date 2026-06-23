@@ -2,10 +2,11 @@ package util
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/containers/buildah/pkg/parse"
 )
 
 // Mirrors path to a tmpfile if path points to a
@@ -18,18 +19,19 @@ import (
 func MirrorToTempFileIfPathIsDescriptor(file string) (string, bool) {
 	// one use-case is discussed here
 	// https://github.com/containers/buildah/issues/3070
-	if !strings.HasPrefix(file, "/dev/fd") {
+	if !strings.HasPrefix(file, "/dev/fd/") {
 		return file, false
 	}
-	b, err := ioutil.ReadFile(file)
+	b, err := os.ReadFile(file)
 	if err != nil {
 		// if anything goes wrong return original path
 		return file, false
 	}
-	tmpfile, err := ioutil.TempFile(os.TempDir(), "buildah-temp-file")
+	tmpfile, err := os.CreateTemp(parse.GetTempDir(), "buildah-temp-file")
 	if err != nil {
 		return file, false
 	}
+	defer tmpfile.Close()
 	if _, err := tmpfile.Write(b); err != nil {
 		// if anything goes wrong return original path
 		return file, false

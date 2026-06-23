@@ -14,6 +14,60 @@
 
 package utils
 
+import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	kubeadmConstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+)
+
+func TestDecodeCRDFromStringRejectsUnsupportedKind(t *testing.T) {
+	_, err := DecodeCRDFromString("", "UnknownKind")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unsupported CRD kind UnknownKind") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDecodeV1ClusterFromFileReturnsEOFWhenClusterIsMissing(t *testing.T) {
+	clusterfilePath := filepath.Join(t.TempDir(), "Clusterfile")
+	if err := os.WriteFile(clusterfilePath, []byte(`
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: test
+spec:
+  type: SHELL
+  action: PostInstall
+  data: kubectl get nodes
+`), 0600); err != nil {
+		t.Fatalf("write clusterfile: %v", err)
+	}
+
+	_, err := DecodeV1ClusterFromFile(clusterfilePath)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("got error %v, want io.EOF", err)
+	}
+}
+
+func TestDecodeCRDFromByteReturnsEOFWhenKindIsMissing(t *testing.T) {
+	_, err := DecodeCRDFromByte([]byte(`
+apiVersion: sealer.io/v1
+kind: Plugin
+metadata:
+  name: test
+`), kubeadmConstants.InitConfigurationKind)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("got error %v, want io.EOF", err)
+	}
+}
+
 /*func TestDecodeCRDFromFile(t *testing.T) {
 	type args struct {
 		filepath string

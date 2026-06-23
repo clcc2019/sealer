@@ -288,7 +288,7 @@ func (kp *KubefileParser) processCopy(node *Node, result *KubefileResult) error 
 	}
 
 	ex := shell.NewLex('\\')
-	src, err := ex.ProcessWordWithMap(copySrc, map[string]string{"ARCH": arch})
+	src, _, err := ex.ProcessWord(copySrc, shell.EnvsFromSlice([]string{"ARCH=" + arch}))
 	if err != nil {
 		return fmt.Errorf("failed to render COPY instruction: %v", err)
 	}

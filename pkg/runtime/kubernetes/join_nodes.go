@@ -39,6 +39,7 @@ func (k *Runtime) joinNodes(newNodes, masters []net.IP, kubeadmConfig kubeadm.Ku
 
 	kubeadmConfig.JoinConfiguration.Discovery.BootstrapToken = &token
 	kubeadmConfig.JoinConfiguration.Discovery.BootstrapToken.APIServerEndpoint = net.JoinHostPort(k.getAPIServerVIP().String(), "6443")
+	kubeadmConfig.JoinConfiguration.Discovery.TLSBootstrapToken = token.Token
 	kubeadmConfig.JoinConfiguration.ControlPlane = nil
 
 	if err := k.configureLvs(masters, newNodes); err != nil {

@@ -53,7 +53,7 @@ const (
 func (k *KubeadmConfig) LoadFromClusterfile(kubeadmConfig KubeadmConfig) error {
 	k.APIServer.CertSANs = strUtils.RemoveDuplicate(append(k.APIServer.CertSANs, kubeadmConfig.APIServer.CertSANs...))
 
-	return mergo.Merge(k, kubeadmConfig)
+	return mergeKubeadmConfig(k, kubeadmConfig)
 }
 
 // Merge Using github.com/imdario/mergo to merge KubeadmConfig to the ClusterImage default kubeadm config, overwrite some field.
@@ -65,7 +65,45 @@ func (k *KubeadmConfig) Merge(kubeadmYamlPath string, decode func(arg string, ki
 	}
 	k.APIServer.CertSANs = strUtils.RemoveDuplicate(append(k.APIServer.CertSANs, newConfig.APIServer.CertSANs...))
 
-	return mergo.Merge(k, newConfig)
+	return mergeKubeadmConfig(k, newConfig)
+}
+
+func mergeKubeadmConfig(dst *KubeadmConfig, src KubeadmConfig) error {
+	mergeExtraArgs(dst, src)
+
+	return mergo.Merge(dst, src)
+}
+
+func mergeExtraArgs(dst *KubeadmConfig, src KubeadmConfig) {
+	dst.ClusterConfiguration.APIServer.ExtraArgs = mergeArgsByName(dst.ClusterConfiguration.APIServer.ExtraArgs, src.ClusterConfiguration.APIServer.ExtraArgs)
+	dst.ClusterConfiguration.ControllerManager.ExtraArgs = mergeArgsByName(dst.ClusterConfiguration.ControllerManager.ExtraArgs, src.ClusterConfiguration.ControllerManager.ExtraArgs)
+	dst.ClusterConfiguration.Scheduler.ExtraArgs = mergeArgsByName(dst.ClusterConfiguration.Scheduler.ExtraArgs, src.ClusterConfiguration.Scheduler.ExtraArgs)
+	dst.InitConfiguration.NodeRegistration.KubeletExtraArgs = mergeArgsByName(dst.InitConfiguration.NodeRegistration.KubeletExtraArgs, src.InitConfiguration.NodeRegistration.KubeletExtraArgs)
+	dst.JoinConfiguration.NodeRegistration.KubeletExtraArgs = mergeArgsByName(dst.JoinConfiguration.NodeRegistration.KubeletExtraArgs, src.JoinConfiguration.NodeRegistration.KubeletExtraArgs)
+
+	if dst.ClusterConfiguration.Etcd.Local != nil && src.ClusterConfiguration.Etcd.Local != nil {
+		dst.ClusterConfiguration.Etcd.Local.ExtraArgs = mergeArgsByName(dst.ClusterConfiguration.Etcd.Local.ExtraArgs, src.ClusterConfiguration.Etcd.Local.ExtraArgs)
+	}
+}
+
+func mergeArgsByName(dst, src []kubeadmv1beta4.Arg) []kubeadmv1beta4.Arg {
+	if len(dst) == 0 {
+		return append([]kubeadmv1beta4.Arg(nil), src...)
+	}
+
+	existing := make(map[string]struct{}, len(dst))
+	for _, arg := range dst {
+		existing[arg.Name] = struct{}{}
+	}
+
+	for _, arg := range src {
+		if _, ok := existing[arg.Name]; ok {
+			continue
+		}
+		dst = append(dst, arg)
+	}
+
+	return dst
 }
 
 func (k *KubeadmConfig) GetCertSANS() []string {
@@ -147,6 +185,10 @@ func setArg(args []kubeadmv1beta4.Arg, name, value string) []kubeadmv1beta4.Arg 
 func NewKubeadmConfig(fromClusterFile KubeadmConfig, fromFile string, masters []net.IP, apiServerDomain,
 	cgroupDriver string, imageRepo string, apiServerVIP net.IP, extraSANs []string) (KubeadmConfig, error) {
 	conf := KubeadmConfig{}
+
+	if len(masters) == 0 {
+		return conf, fmt.Errorf("at least one master is required to generate kubeadm config")
+	}
 
 	if err := conf.LoadFromClusterfile(fromClusterFile); err != nil {
 		return conf, fmt.Errorf("failed to load kubeadm config from clusterfile: %v", err)

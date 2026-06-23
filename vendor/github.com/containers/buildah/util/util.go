@@ -7,25 +7,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 
 	"github.com/containers/buildah/define"
-	"github.com/containers/common/libimage"
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/common/pkg/util"
-	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/image/v5/pkg/shortnames"
-	"github.com/containers/image/v5/signature"
-	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/storage"
 	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
+	"go.podman.io/common/pkg/config"
+	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/pkg/shortnames"
+	"go.podman.io/image/v5/signature"
+	"go.podman.io/image/v5/transports/alltransports"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage"
 )
 
 const (
@@ -36,18 +35,16 @@ const (
 	DefaultTransport = "docker://"
 )
 
-var (
-	// RegistryDefaultPathPrefix contains a per-registry listing of default prefixes
-	// to prepend to image names that only contain a single path component.
-	RegistryDefaultPathPrefix = map[string]string{
-		"index.docker.io": "library",
-		"docker.io":       "library",
-	}
-)
+// RegistryDefaultPathPrefix contains a per-registry listing of default prefixes
+// to prepend to image names that only contain a single path component.
+var RegistryDefaultPathPrefix = map[string]string{
+	"index.docker.io": "library",
+	"docker.io":       "library",
+}
 
-// StringInSlice is deprecated, use github.com/containers/common/pkg/util.StringInSlice
+// StringInSlice is deprecated, use slices.Contains
 func StringInSlice(s string, slice []string) bool {
-	return util.StringInSlice(s, slice)
+	return slices.Contains(slice, s)
 }
 
 // resolveName checks if name is a valid image name, and if that name doesn't
@@ -118,18 +115,18 @@ func ExpandNames(names []string, systemContext *types.SystemContext, store stora
 		var name reference.Named
 		nameList, _, err := resolveName(n, systemContext, store)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing name %q: %w", n, err)
+			return nil, fmt.Errorf("parsing name %q: %w", n, err)
 		}
 		if len(nameList) == 0 {
 			named, err := reference.ParseNormalizedNamed(n)
 			if err != nil {
-				return nil, fmt.Errorf("error parsing name %q: %w", n, err)
+				return nil, fmt.Errorf("parsing name %q: %w", n, err)
 			}
 			name = named
 		} else {
 			named, err := reference.ParseNormalizedNamed(nameList[0])
 			if err != nil {
-				return nil, fmt.Errorf("error parsing name %q: %w", nameList[0], err)
+				return nil, fmt.Errorf("parsing name %q: %w", nameList[0], err)
 			}
 			name = named
 		}
@@ -139,10 +136,10 @@ func ExpandNames(names []string, systemContext *types.SystemContext, store stora
 	return expanded, nil
 }
 
-// FindImage locates the locally-stored image which corresponds to a given name.
-// Please note that the `firstRegistry` argument has been deprecated and has no
+// FindImage locates the locally-stored image which corresponds to a given
+// name.  Please note that the second argument has been deprecated and has no
 // effect anymore.
-func FindImage(store storage.Store, firstRegistry string, systemContext *types.SystemContext, image string) (types.ImageReference, *storage.Image, error) {
+func FindImage(store storage.Store, _ string, systemContext *types.SystemContext, image string) (types.ImageReference, *storage.Image, error) {
 	runtime, err := libimage.RuntimeFromStore(store, &libimage.RuntimeOptions{SystemContext: systemContext})
 	if err != nil {
 		return nil, nil, err
@@ -169,7 +166,7 @@ func ResolveNameToReferences(
 ) (refs []types.ImageReference, err error) {
 	names, transport, err := resolveName(image, systemContext, store)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing name %q: %w", image, err)
+		return nil, fmt.Errorf("parsing name %q: %w", image, err)
 	}
 
 	if transport != DefaultTransport {
@@ -185,15 +182,14 @@ func ResolveNameToReferences(
 		refs = append(refs, ref)
 	}
 	if len(refs) == 0 {
-		return nil, fmt.Errorf("error locating images with names %v", names)
+		return nil, fmt.Errorf("locating images with names %v", names)
 	}
 	return refs, nil
 }
 
 // AddImageNames adds the specified names to the specified image.  Please note
-// that the `firstRegistry` argument has been deprecated and has no effect
-// anymore.
-func AddImageNames(store storage.Store, firstRegistry string, systemContext *types.SystemContext, image *storage.Image, addNames []string) error {
+// that the second argument has been deprecated and has no effect anymore.
+func AddImageNames(store storage.Store, _ string, systemContext *types.SystemContext, image *storage.Image, addNames []string) error {
 	runtime, err := libimage.RuntimeFromStore(store, &libimage.RuntimeOptions{SystemContext: systemContext})
 	if err != nil {
 		return err
@@ -206,7 +202,7 @@ func AddImageNames(store storage.Store, firstRegistry string, systemContext *typ
 
 	for _, tag := range addNames {
 		if err := localImage.Tag(tag); err != nil {
-			return fmt.Errorf("error tagging image %s: %w", image.ID, err)
+			return fmt.Errorf("tagging image %s: %w", image.ID, err)
 		}
 	}
 
@@ -244,7 +240,7 @@ func Runtime() string {
 
 	conf, err := config.Default()
 	if err != nil {
-		logrus.Warnf("Error loading container config when searching for local runtime: %v", err)
+		logrus.Warnf("Error loading default container config when searching for local runtime: %v", err)
 		return define.DefaultRuntime
 	}
 	return conf.Engine.OCIRuntime
@@ -339,12 +335,8 @@ func logIfNotErrno(err error, what string, ignores ...syscall.Errno) (logged boo
 	if err == nil {
 		return false
 	}
-	if errno, isErrno := err.(syscall.Errno); isErrno {
-		for _, ignore := range ignores {
-			if errno == ignore {
-				return false
-			}
-		}
+	if errno, ok := err.(syscall.Errno); ok && slices.Contains(ignores, errno) {
+		return false
 	}
 	logrus.Error(what)
 	return true
@@ -375,12 +367,6 @@ func TruncateString(str string, to int) string {
 	}
 	return newStr
 }
-
-var (
-	isUnifiedOnce sync.Once
-	isUnified     bool
-	isUnifiedErr  error
-)
 
 // fileExistsAndNotADir - Check to see if a file exists
 // and that it is not a directory.
@@ -441,7 +427,14 @@ func (m byDestination) Len() int {
 }
 
 func (m byDestination) Less(i, j int) bool {
-	return m.parts(i) < m.parts(j)
+	iparts, jparts := m.parts(i), m.parts(j)
+	switch {
+	case iparts < jparts:
+		return true
+	case iparts > jparts:
+		return false
+	}
+	return filepath.Clean(m[i].Destination) < filepath.Clean(m[j].Destination)
 }
 
 func (m byDestination) Swap(i, j int) {
@@ -453,7 +446,7 @@ func (m byDestination) parts(i int) int {
 }
 
 func SortMounts(m []specs.Mount) []specs.Mount {
-	sort.Sort(byDestination(m))
+	sort.Stable(byDestination(m))
 	return m
 }
 
@@ -465,23 +458,4 @@ func VerifyTagName(imageSpec string) (types.ImageReference, error) {
 		}
 	}
 	return ref, nil
-}
-
-// Cause returns the most underlying error for the provided one. There is a
-// maximum error depth of 100 to avoid endless loops. An additional error log
-// message will be created if this maximum has reached.
-func Cause(err error) (cause error) {
-	cause = err
-
-	const maxDepth = 100
-	for i := 0; i <= maxDepth; i++ {
-		res := errors.Unwrap(cause)
-		if res == nil {
-			return cause
-		}
-		cause = res
-	}
-
-	logrus.Errorf("Max error depth of %d reached, cannot unwrap until root cause: %v", maxDepth, err)
-	return cause
 }

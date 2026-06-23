@@ -30,7 +30,7 @@ export THIS_PLATFORM_ASSETS="${SEALER_ROOT}/_output/assets"
 # fix containers dependency issue
 # https://github.com/containers/image/pull/271/files
 # for btrfs, we just use overlay at present, so there is no need to include btrfs, otherwise we need fix some lib problems
-GO_BUILD_FLAGS="containers_image_openpgp exclude_graphdriver_devicemapper exclude_graphdriver_btrfs"
+GO_BUILD_FLAGS="containers_image_openpgp exclude_graphdriver_devicemapper exclude_graphdriver_btrfs cni"
 
 debug() {
   timestamp=$(date +"[%m%d %H:%M:%S]")
@@ -151,4 +151,3 @@ if [[ $MULTI_PLATFORM_BUILD ]]; then
 else
   build_binaries `go env GOOS` `go env GOARCH`
 fi
-

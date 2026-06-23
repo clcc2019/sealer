@@ -3,20 +3,33 @@ package buildah
 import (
 	"fmt"
 	"io"
+	"net"
 
+	"github.com/containers/buildah/copier"
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/internal"
 	"github.com/containers/buildah/pkg/sshagent"
-	"github.com/containers/image/v5/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libnetwork/etchosts"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage/pkg/idtools"
+	"go.podman.io/storage/pkg/lockfile"
 )
 
 const (
 	// runUsingRuntimeCommand is a command we use as a key for reexec
 	runUsingRuntimeCommand = define.Package + "-oci-runtime"
 )
+
+// compatLayerExclusions is the set of items to omit from layers if
+// options.CompatLayerOmissions is set to true.  For whatever reason, the
+// classic builder didn't bake these into images, but BuildKit does.
+var compatLayerExclusions = []copier.ConditionalRemovePath{
+	{Path: "dev", Owner: &idtools.IDPair{UID: 0, GID: 0}},
+	{Path: "proc", Owner: &idtools.IDPair{UID: 0, GID: 0}},
+	{Path: "sys", Owner: &idtools.IDPair{UID: 0, GID: 0}},
+}
 
 // TerminalPolicy takes the value DefaultTerminal, WithoutTerminal, or WithTerminal.
 type TerminalPolicy int
@@ -86,7 +99,9 @@ type RunOptions struct {
 	Runtime string
 	// Args adds global arguments for the runtime.
 	Args []string
-	// NoHosts use the images /etc/hosts file
+	// NoHostname won't create new /etc/hostname file
+	NoHostname bool
+	// NoHosts won't create new /etc/hosts file
 	NoHosts bool
 	// NoPivot adds the --no-pivot runtime flag.
 	NoPivot bool
@@ -143,45 +158,57 @@ type RunOptions struct {
 	// after processing the AddCapabilities set.  If a capability appears in both
 	// lists, it will be dropped.
 	DropCapabilities []string
-	// Devices are the additional devices to add to the containers
+	// Devices are parsed additional devices to add
 	Devices define.ContainerDevices
-	// Secrets are the available secrets to use in a RUN
+	// DeviceSpecs are unparsed additional devices to add
+	DeviceSpecs []string
+	// Secrets are the available secrets to use
 	Secrets map[string]define.Secret
-	// SSHSources is the available ssh agents to use in a RUN
+	// SSHSources is the available ssh agents to use
 	SSHSources map[string]*sshagent.Source `json:"-"`
-	// RunMounts are mounts for this run. RunMounts for this run
-	// will not show up in subsequent runs.
+	// RunMounts are unparsed mounts to be added for this run
 	RunMounts []string
 	// Map of stages and container mountpoint if any from stage executor
 	StageMountPoints map[string]internal.StageMountDetails
-	// External Image mounts to be cleaned up.
-	// Buildah run --mount could mount image before RUN calls, RUN could cleanup
-	// them up as well
+	// IDs of mounted images to be unmounted before returning
+	// Deprecated: before 1.39, these images would not be consistently
+	// unmounted if Run() returned an error
 	ExternalImageMounts []string
 	// System context of current build
-	SystemContext *types.SystemContext
+	SystemContext *types.SystemContext `json:"-"`
 	// CgroupManager to use for running OCI containers
 	CgroupManager string
+	// CDIConfigDir is the location of CDI configuration files, if the files in
+	// the default configuration locations shouldn't be used.
+	CDIConfigDir string
+	// CompatBuiltinVolumes causes the contents of locations marked as
+	// volumes in the container's configuration to be set up as bind mounts to
+	// directories which are not in the container's rootfs, hiding changes
+	// made to contents of those changes when the container is subsequently
+	// committed.
+	CompatBuiltinVolumes types.OptionalBool
 }
 
 // RunMountArtifacts are the artifacts created when using a run mount.
 type runMountArtifacts struct {
-	// RunMountTargets are the run mount targets inside the container
-	RunMountTargets []string
-	// TmpFiles are artifacts that need to be removed outside the container
-	TmpFiles []string
-	// Any external images which were mounted inside container
+	// RunOverlayDirs are overlay directories which will need to be cleaned up using overlay.RemoveTemp()
+	RunOverlayDirs []string
+	// Any images which were mounted, which should be unmounted
 	MountedImages []string
-	// Agents are the ssh agents started
+	// Agents are the ssh agents started, which should have their Shutdown() methods called
 	Agents []*sshagent.AgentServer
 	// SSHAuthSock is the path to the ssh auth sock inside the container
 	SSHAuthSock string
-	// LockedTargets to be unlocked if there are any.
-	LockedTargets []string
+	// Lock files, which should have their Unlock() methods called
+	TargetLocks []*lockfile.LockFile
+	// Intermediate mount points, which should be Unmount()ed and Removed()d
+	IntermediateMounts []string
 }
 
 // RunMountInfo are the available run mounts for this run
 type runMountInfo struct {
+	// WorkDir is the current working directory inside the container.
+	WorkDir string
 	// ContextDir is the root directory for the source location for bind mounts.
 	ContextDir string
 	// Secrets are the available secrets to use in a RUN
@@ -196,10 +223,20 @@ type runMountInfo struct {
 
 // IDMaps are the UIDs, GID, and maps for the run
 type IDMaps struct {
-	uidmap     []spec.LinuxIDMapping
-	gidmap     []spec.LinuxIDMapping
+	uidmap     []specs.LinuxIDMapping
+	gidmap     []specs.LinuxIDMapping
 	rootUID    int
 	rootGID    int
 	processUID int
 	processGID int
+}
+
+// netResult type to hold network info for hosts/resolv.conf
+type netResult struct {
+	entries                           etchosts.HostEntries
+	dnsServers                        []string
+	excludeIPs                        []net.IP
+	ipv6                              bool
+	keepHostResolvers                 bool
+	preferredHostContainersInternalIP string
 }

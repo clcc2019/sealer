@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package copier
 
@@ -17,13 +16,13 @@ var canChroot = os.Getuid() == 0
 func chroot(root string) (bool, error) {
 	if canChroot {
 		if err := os.Chdir(root); err != nil {
-			return false, fmt.Errorf("error changing to intended-new-root directory %q: %w", root, err)
+			return false, fmt.Errorf("changing to intended-new-root directory %q: %w", root, err)
 		}
 		if err := unix.Chroot(root); err != nil {
-			return false, fmt.Errorf("error chrooting to directory %q: %w", root, err)
+			return false, fmt.Errorf("chrooting to directory %q: %w", root, err)
 		}
 		if err := os.Chdir(string(os.PathSeparator)); err != nil {
-			return false, fmt.Errorf("error changing to just-became-root directory %q: %w", root, err)
+			return false, fmt.Errorf("changing to just-became-root directory %q: %w", root, err)
 		}
 		return true, nil
 	}
@@ -58,7 +57,7 @@ func lchown(path string, uid, gid int) error {
 	return os.Lchown(path, uid, gid)
 }
 
-func lutimes(isSymlink bool, path string, atime, mtime time.Time) error {
+func lutimes(_ bool, path string, atime, mtime time.Time) error {
 	if atime.IsZero() || mtime.IsZero() {
 		now := time.Now()
 		if atime.IsZero() {
@@ -71,6 +70,13 @@ func lutimes(isSymlink bool, path string, atime, mtime time.Time) error {
 	return unix.Lutimes(path, []unix.Timeval{unix.NsecToTimeval(atime.UnixNano()), unix.NsecToTimeval(mtime.UnixNano())})
 }
 
+func owner(info os.FileInfo) (int, int, error) {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return int(st.Uid), int(st.Gid), nil
+	}
+	return -1, -1, syscall.ENOSYS
+}
+
 // sameDevice returns true unless we're sure that they're not on the same device
 func sameDevice(a, b os.FileInfo) bool {
 	aSys := a.Sys()
@@ -78,15 +84,10 @@ func sameDevice(a, b os.FileInfo) bool {
 	if aSys == nil || bSys == nil {
 		return true
 	}
-	au, aok := aSys.(*syscall.Stat_t)
-	bu, bok := bSys.(*syscall.Stat_t)
-	if !aok || !bok {
+	uA, okA := aSys.(*syscall.Stat_t)
+	uB, okB := bSys.(*syscall.Stat_t)
+	if !okA || !okB {
 		return true
 	}
-	return au.Dev == bu.Dev
+	return uA.Dev == uB.Dev
 }
-
-const (
-	testModeMask           = int64(os.ModePerm)
-	testIgnoreSymlinkDates = false
-)

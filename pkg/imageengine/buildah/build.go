@@ -31,9 +31,9 @@ import (
 	"github.com/containers/buildah/pkg/parse"
 	buildahutil "github.com/containers/buildah/pkg/util"
 	"github.com/containers/buildah/util"
-	"github.com/containers/common/pkg/auth"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/pkg/auth"
 )
 
 type buildFlagsWrapper struct {
@@ -243,7 +243,7 @@ func (engine *Engine) wrapper2Options(opts *options.BuildOptions, wrapper *build
 
 	var excludes []string
 	if wrapper.IgnoreFile != "" {
-		if excludes, _, err = parse.ContainerIgnoreFile(contextDir, wrapper.IgnoreFile); err != nil {
+		if excludes, _, err = parse.ContainerIgnoreFile(contextDir, wrapper.IgnoreFile, kubefiles); err != nil {
 			return define.BuildOptions{}, []string{}, err
 		}
 	}

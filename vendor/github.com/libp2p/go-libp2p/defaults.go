@@ -9,7 +9,6 @@ import (
 	mplex "github.com/libp2p/go-libp2p-mplex"
 	noise "github.com/libp2p/go-libp2p-noise"
 	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
-	quic "github.com/libp2p/go-libp2p-quic-transport"
 	tls "github.com/libp2p/go-libp2p-tls"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
@@ -41,7 +40,6 @@ var DefaultMuxers = ChainOptions(
 // libp2p instead of replacing them.
 var DefaultTransports = ChainOptions(
 	Transport(tcp.NewTCPTransport),
-	Transport(quic.NewTransport),
 	Transport(ws.New),
 )
 

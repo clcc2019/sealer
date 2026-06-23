@@ -15,8 +15,9 @@
 package parser
 
 import (
-	"github.com/containers/common/libimage"
 	"github.com/opencontainers/go-digest"
+	"go.podman.io/common/libimage"
+	libimagedefine "go.podman.io/common/libimage/define"
 
 	v1 "github.com/sealerio/sealer/pkg/define/image/v1"
 	"github.com/sealerio/sealer/pkg/define/options"
@@ -125,7 +126,7 @@ func (testImageEngine) DeleteManifests(names []string, opts *options.ManifestDel
 	panic("implement me")
 }
 
-func (testImageEngine) InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimage.ManifestListData, error) {
+func (testImageEngine) InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimagedefine.ManifestListData, error) {
 	panic("implement me")
 }
 

@@ -24,7 +24,7 @@ import (
 
 	osi "github.com/sealerio/sealer/utils/os"
 
-	"github.com/docker/docker/api/types"
+	registrytypes "github.com/docker/docker/api/types/registry"
 
 	"github.com/sealerio/sealer/common"
 )
@@ -61,15 +61,15 @@ type DockerAuthService struct {
 	AuthContent DockerAuth `json:"auths"`
 }
 
-func (s *DockerAuthService) GetAuthByDomain(domain string) (types.AuthConfig, error) {
-	defaultAuthConfig := types.AuthConfig{ServerAddress: domain}
+func (s *DockerAuthService) GetAuthByDomain(domain string) (registrytypes.AuthConfig, error) {
+	defaultAuthConfig := registrytypes.AuthConfig{ServerAddress: domain}
 
 	user, passwd, err := s.AuthContent.Get(domain)
 	if err != nil {
 		return defaultAuthConfig, err
 	}
 
-	return types.AuthConfig{
+	return registrytypes.AuthConfig{
 		Username:      user,
 		Password:      passwd,
 		ServerAddress: domain,

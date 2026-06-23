@@ -15,8 +15,9 @@
 package imageengine
 
 import (
-	"github.com/containers/common/libimage"
 	"github.com/opencontainers/go-digest"
+	"go.podman.io/common/libimage"
+	libimagedefine "go.podman.io/common/libimage/define"
 
 	v1 "github.com/sealerio/sealer/pkg/define/image/v1"
 	"github.com/sealerio/sealer/pkg/define/options"
@@ -65,7 +66,7 @@ type Interface interface {
 
 	DeleteManifests(names []string, opts *options.ManifestDeleteOpts) error
 
-	InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimage.ManifestListData, error)
+	InspectManifest(name string, opts *options.ManifestInspectOpts) (*libimagedefine.ManifestListData, error)
 
 	PushManifest(name, destSpec string, opts *options.PushOptions) error
 

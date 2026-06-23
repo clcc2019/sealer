@@ -1,27 +1,23 @@
 package overlay
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 
-	"errors"
-
-	"github.com/containers/storage/pkg/idtools"
-	"github.com/containers/storage/pkg/system"
-	"github.com/containers/storage/pkg/unshare"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
+	"go.podman.io/storage/pkg/idtools"
+	"go.podman.io/storage/pkg/mount"
+	"go.podman.io/storage/pkg/system"
+	"go.podman.io/storage/pkg/unshare"
 )
 
-// Options type holds various configuration options for overlay
-// MountWithOptions accepts following type so it is easier to specify
-// more verbose configuration for overlay mount.
+// Options for MountWithOptions().
 type Options struct {
 	// The Upper directory is normally writable layer in an overlay mount.
 	// Note!! : Following API does not handles escaping or validates correctness of the values
@@ -43,57 +39,65 @@ type Options struct {
 	// TODO: Should we address above comment and handle escaping of metacharacters like
 	// `comma`, `backslash` ,`colon` and any other special characters
 	WorkDirOptionFragment string
-	// Graph options relayed from podman, will be responsible for choosing mount program
+	// Graph options being used by the caller, will be searched when choosing mount program
 	GraphOpts []string
 	// Mark if following overlay is read only
 	ReadOnly bool
-	// RootUID is not used yet but keeping it here for legacy reasons.
+	// Deprecated: RootUID is not used
 	RootUID int
-	// RootGID is not used yet but keeping it here for legacy reasons.
+	// Deprecated: RootGID is not used
 	RootGID int
+	// Force overlay mounting and return a bind mount, rather than
+	// attempting to optimize by having the runtime actually mount and
+	// manage the overlay filesystem.
+	ForceMount bool
+	// MountLabel is a label to force for the overlay filesystem.
+	MountLabel string
 }
 
-// TempDir generates an overlay Temp directory in the container content
+// TempDir generates a uniquely-named directory under ${containerDir}/overlay
+// which can be used as a parent directory for the upper and working
+// directories for an overlay mount, creates "upper" and "work" directories
+// beneath it, and then returns the path of the new directory.
 func TempDir(containerDir string, rootUID, rootGID int) (string, error) {
 	contentDir := filepath.Join(containerDir, "overlay")
-	if err := idtools.MkdirAllAs(contentDir, 0700, rootUID, rootGID); err != nil {
+	if err := idtools.MkdirAllAs(contentDir, 0o700, rootUID, rootGID); err != nil {
 		return "", fmt.Errorf("failed to create the overlay %s directory: %w", contentDir, err)
 	}
 
-	contentDir, err := ioutil.TempDir(contentDir, "")
+	contentDir, err := os.MkdirTemp(contentDir, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to create the overlay tmpdir in %s directory: %w", contentDir, err)
 	}
 
-	return generateOverlayStructure(contentDir, rootUID, rootGID)
+	return contentDir, generateOverlayStructure(contentDir, rootUID, rootGID)
 }
 
 // GenerateStructure generates an overlay directory structure for container content
 func GenerateStructure(containerDir, containerID, name string, rootUID, rootGID int) (string, error) {
 	contentDir := filepath.Join(containerDir, "overlay-containers", containerID, name)
-	if err := idtools.MkdirAllAs(contentDir, 0700, rootUID, rootGID); err != nil {
+	if err := idtools.MkdirAllAs(contentDir, 0o700, rootUID, rootGID); err != nil {
 		return "", fmt.Errorf("failed to create the overlay %s directory: %w", contentDir, err)
 	}
 
-	return generateOverlayStructure(contentDir, rootUID, rootGID)
+	return contentDir, generateOverlayStructure(contentDir, rootUID, rootGID)
 }
 
-// generateOverlayStructure generates upper, work and merge directory structure for overlay directory
-func generateOverlayStructure(containerDir string, rootUID, rootGID int) (string, error) {
+// generateOverlayStructure generates upper, work and merge directories under the specified directory
+func generateOverlayStructure(containerDir string, rootUID, rootGID int) error {
 	upperDir := filepath.Join(containerDir, "upper")
 	workDir := filepath.Join(containerDir, "work")
-	if err := idtools.MkdirAllAs(upperDir, 0700, rootUID, rootGID); err != nil {
-		return "", fmt.Errorf("failed to create the overlay %s directory: %w", upperDir, err)
+	if err := idtools.MkdirAllAs(upperDir, 0o700, rootUID, rootGID); err != nil {
+		return fmt.Errorf("creating overlay upper directory %s: %w", upperDir, err)
 	}
-	if err := idtools.MkdirAllAs(workDir, 0700, rootUID, rootGID); err != nil {
-		return "", fmt.Errorf("failed to create the overlay %s directory: %w", workDir, err)
+	if err := idtools.MkdirAllAs(workDir, 0o700, rootUID, rootGID); err != nil {
+		return fmt.Errorf("creating overlay work directory %s: %w", workDir, err)
 	}
 	mergeDir := filepath.Join(containerDir, "merge")
-	if err := idtools.MkdirAllAs(mergeDir, 0700, rootUID, rootGID); err != nil {
-		return "", fmt.Errorf("failed to create the overlay %s directory: %w", mergeDir, err)
+	if err := idtools.MkdirAllAs(mergeDir, 0o700, rootUID, rootGID); err != nil {
+		return fmt.Errorf("creating overlay merge directory %s: %w", mergeDir, err)
 	}
-
-	return containerDir, nil
+	return nil
 }
 
 // Mount creates a subdir of the contentDir based on the source directory
@@ -115,10 +119,10 @@ func MountReadOnly(contentDir, source, dest string, rootUID, rootGID int, graphO
 
 // findMountProgram finds if any mount program is specified in the graph options.
 func findMountProgram(graphOptions []string) string {
-	mountMap := map[string]bool{
-		".mount_program":         true,
-		"overlay.mount_program":  true,
-		"overlay2.mount_program": true,
+	mountMap := map[string]struct{}{
+		".mount_program":         {},
+		"overlay.mount_program":  {},
+		"overlay2.mount_program": {},
 	}
 
 	for _, i := range graphOptions {
@@ -128,7 +132,7 @@ func findMountProgram(graphOptions []string) string {
 		}
 		key := s[0]
 		val := s[1]
-		if mountMap[key] {
+		if _, has := mountMap[key]; has {
 			return val
 		}
 	}
@@ -136,8 +140,8 @@ func findMountProgram(graphOptions []string) string {
 	return ""
 }
 
-// mountWithMountProgram mount an overlay at mergeDir using the specified mount program
-// and overlay options.
+// mountWithMountProgram mounts an overlay at mergeDir using the specified
+// mount program and overlay options.
 func mountWithMountProgram(mountProgram, overlayOptions, mergeDir string) error {
 	cmd := exec.Command(mountProgram, "-o", overlayOptions, mergeDir)
 
@@ -147,72 +151,10 @@ func mountWithMountProgram(mountProgram, overlayOptions, mergeDir string) error 
 	return nil
 }
 
-// MountWithOptions creates a subdir of the contentDir based on the source directory
-// from the source system.  It then mounts up the source directory on to the
-// generated mount point and returns the mount point to the caller.
-// But allows api to set custom workdir, upperdir and other overlay options
-// Following API is being used by podman at the moment
-func MountWithOptions(contentDir, source, dest string, opts *Options) (mount specs.Mount, Err error) {
-	mergeDir := filepath.Join(contentDir, "merge")
-
-	// Create overlay mount options for rw/ro.
-	var overlayOptions string
-	if opts.ReadOnly {
-		// Read-only overlay mounts require two lower layer.
-		lowerTwo := filepath.Join(contentDir, "lower")
-		if err := os.Mkdir(lowerTwo, 0755); err != nil {
-			return mount, err
-		}
-		overlayOptions = fmt.Sprintf("lowerdir=%s:%s,private", escapeColon(source), lowerTwo)
-	} else {
-		// Read-write overlay mounts want a lower, upper and a work layer.
-		workDir := filepath.Join(contentDir, "work")
-		upperDir := filepath.Join(contentDir, "upper")
-
-		if opts.WorkDirOptionFragment != "" && opts.UpperDirOptionFragment != "" {
-			workDir = opts.WorkDirOptionFragment
-			upperDir = opts.UpperDirOptionFragment
-		}
-
-		st, err := os.Stat(source)
-		if err != nil {
-			return mount, err
-		}
-		if err := os.Chmod(upperDir, st.Mode()); err != nil {
-			return mount, err
-		}
-		if stat, ok := st.Sys().(*syscall.Stat_t); ok {
-			if err := os.Chown(upperDir, int(stat.Uid), int(stat.Gid)); err != nil {
-				return mount, err
-			}
-		}
-		overlayOptions = fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s,private", escapeColon(source), upperDir, workDir)
-	}
-
-	mountProgram := findMountProgram(opts.GraphOpts)
-	if mountProgram != "" {
-		if err := mountWithMountProgram(mountProgram, overlayOptions, mergeDir); err != nil {
-			return mount, err
-		}
-
-		mount.Source = mergeDir
-		mount.Destination = dest
-		mount.Type = "bind"
-		mount.Options = []string{"bind", "slave"}
-		return mount, nil
-	}
-
-	if unshare.IsRootless() {
-		/* If a mount_program is not specified, fallback to try mounting native overlay.  */
-		overlayOptions = fmt.Sprintf("%s,userxattr", overlayOptions)
-	}
-
-	mount.Source = mergeDir
-	mount.Destination = dest
-	mount.Type = "overlay"
-	mount.Options = strings.Split(overlayOptions, ",")
-
-	return mount, nil
+// mountNatively mounts an overlay at mergeDir using the kernel's mount()
+// system call.
+func mountNatively(overlayOptions, mergeDir string) error {
+	return mount.Mount("overlay", mergeDir, "overlay", overlayOptions)
 }
 
 // Convert ":" to "\:", the path which will be overlay mounted need to be escaped
@@ -220,8 +162,9 @@ func escapeColon(source string) string {
 	return strings.ReplaceAll(source, ":", "\\:")
 }
 
-// RemoveTemp removes temporary mountpoint and all content from its parent
-// directory
+// RemoveTemp unmounts a filesystem mounted at ${contentDir}/merge, and then
+// removes ${contentDir}, which is typically a path returned by TempDir(),
+// along with any contents it might still have.
 func RemoveTemp(contentDir string) error {
 	if err := Unmount(contentDir); err != nil {
 		return err
@@ -230,7 +173,9 @@ func RemoveTemp(contentDir string) error {
 	return os.RemoveAll(contentDir)
 }
 
-// Unmount the overlay mountpoint
+// Unmount the overlay mountpoint at ${contentDir}/merge, where ${contentDir}
+// is typically a path returned by TempDir().  The mountpoint itself is left
+// unmodified.
 func Unmount(contentDir string) error {
 	mergeDir := filepath.Join(contentDir, "merge")
 
@@ -250,12 +195,14 @@ func Unmount(contentDir string) error {
 	}
 
 	// Ignore EINVAL as the specified merge dir is not a mount point
-	if err := unix.Unmount(mergeDir, 0); err != nil && !errors.Is(err, os.ErrNotExist) && err != unix.EINVAL {
+	if err := system.Unmount(mergeDir); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.EINVAL) {
 		return fmt.Errorf("unmount overlay %s: %w", mergeDir, err)
 	}
 	return nil
 }
 
+// recreate removes a directory tree and then recreates the top of that tree
+// with the same mode and ownership.
 func recreate(contentDir string) error {
 	st, err := system.Stat(contentDir)
 	if err != nil {
@@ -286,12 +233,14 @@ func CleanupMount(contentDir string) (Err error) {
 	return nil
 }
 
-// CleanupContent removes all temporary mountpoint and all content from
-// directory
+// CleanupContent removes every temporary mountpoint created under
+// ${containerDir}/overlay as a result of however many calls to TempDir(),
+// roughly equivalent to calling RemoveTemp() for each of the directories whose
+// paths it returned, and then removes ${containerDir} itself.
 func CleanupContent(containerDir string) (Err error) {
 	contentDir := filepath.Join(containerDir, "overlay")
 
-	files, err := ioutil.ReadDir(contentDir)
+	files, err := os.ReadDir(contentDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

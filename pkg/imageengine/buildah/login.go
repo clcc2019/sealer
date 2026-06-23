@@ -18,10 +18,10 @@ import (
 	"context"
 	"os"
 
-	"github.com/containers/common/pkg/auth"
-	"github.com/containers/image/v5/types"
 	"github.com/pkg/errors"
 	"github.com/sealerio/sealer/pkg/define/options"
+	"go.podman.io/common/pkg/auth"
+	"go.podman.io/image/v5/types"
 )
 
 func (engine *Engine) Login(opts *options.LoginOptions) error {

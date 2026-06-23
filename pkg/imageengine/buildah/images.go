@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/containers/buildah/pkg/formats"
-	"github.com/containers/common/libimage"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/libimage"
 
 	"github.com/sealerio/sealer/pkg/define/options"
 )
@@ -87,7 +87,7 @@ func (engine *Engine) Images(opts *options.ImagesOptions) error {
 	}
 
 	//TODO add some label to identify sealer image and oci image.
-	images, err := runtime.ListImages(getContext(), []string{}, options)
+	images, err := runtime.ListImages(getContext(), options)
 	if err != nil {
 		return err
 	}

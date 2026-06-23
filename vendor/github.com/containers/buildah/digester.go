@@ -61,7 +61,14 @@ type tarFilterer struct {
 }
 
 func (t *tarFilterer) Write(p []byte) (int, error) {
-	return t.pipeWriter.Write(p)
+	n, err := t.pipeWriter.Write(p)
+	if err != nil {
+		t.closedLock.Lock()
+		closed := t.closed
+		t.closedLock.Unlock()
+		err = fmt.Errorf("writing to tar filter pipe (closed=%v,err=%v): %w", closed, t.err, err)
+	}
+	return n, err
 }
 
 func (t *tarFilterer) Close() error {
@@ -75,7 +82,7 @@ func (t *tarFilterer) Close() error {
 	err := t.pipeWriter.Close()
 	t.wg.Wait()
 	if err != nil {
-		return fmt.Errorf("error closing filter pipe: %w", err)
+		return fmt.Errorf("closing filter pipe: %w", err)
 	}
 	return t.err
 }
@@ -108,9 +115,8 @@ func newTarFilterer(writeCloser io.WriteCloser, filter func(hdr *tar.Header) (sk
 					skip, replaceContents, replacementContents = filter(hdr)
 				}
 				if !skip {
-					err = tarWriter.WriteHeader(hdr)
-					if err != nil {
-						err = fmt.Errorf("error filtering tar header for %q: %w", hdr.Name, err)
+					if err = tarWriter.WriteHeader(hdr); err != nil {
+						err = fmt.Errorf("writing tar header for %q: %w", hdr.Name, err)
 						break
 					}
 					if hdr.Size != 0 {
@@ -122,28 +128,39 @@ func newTarFilterer(writeCloser io.WriteCloser, filter func(hdr *tar.Header) (sk
 							n, copyErr = io.Copy(tarWriter, tarReader)
 						}
 						if copyErr != nil {
-							err = fmt.Errorf("error copying content for %q: %w", hdr.Name, copyErr)
+							err = fmt.Errorf("copying content for %q: %w", hdr.Name, copyErr)
 							break
 						}
 						if n != hdr.Size {
-							err = fmt.Errorf("error filtering content for %q: expected %d bytes, got %d bytes", hdr.Name, hdr.Size, n)
+							err = fmt.Errorf("filtering content for %q: expected %d bytes, got %d bytes", hdr.Name, hdr.Size, n)
 							break
 						}
+					}
+					if err = tarWriter.Flush(); err != nil {
+						err = fmt.Errorf("flushing tar item padding for %q: %w", hdr.Name, err)
+						break
 					}
 				}
 				hdr, err = tarReader.Next()
 			}
-			if err != io.EOF {
-				filterer.err = fmt.Errorf("error reading tar archive: %w", err)
+			if !errors.Is(err, io.EOF) {
+				filterer.err = fmt.Errorf("reading tar archive: %w", err)
 				break
 			}
 			filterer.closedLock.Lock()
 			closed = filterer.closed
 			filterer.closedLock.Unlock()
 		}
-		pipeReader.Close()
-		tarWriter.Close()
-		writeCloser.Close()
+		err1 := tarWriter.Close()
+		err := writeCloser.Close()
+		if err == nil {
+			err = err1
+		}
+		if err != nil {
+			pipeReader.CloseWithError(err)
+		} else {
+			pipeReader.Close()
+		}
 		filterer.wg.Done()
 	}()
 	return filterer

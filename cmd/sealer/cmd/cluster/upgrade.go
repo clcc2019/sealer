@@ -173,6 +173,10 @@ func upgradeCluster(cf clusterfile.Interface, imageEngine imageengine.Interface,
 		ContainerRuntimeConfig: cluster.Spec.ContainerRuntime,
 	}
 
+	if kubeadmConfigFromFile := cf.GetKubeadmConfig(); kubeadmConfigFromFile != nil {
+		runtimeConfig.KubeadmConfig = *kubeadmConfigFromFile
+	}
+
 	upgrader, err := clusterruntime.NewInstaller(infraDriver, *runtimeConfig, clusterruntime.GetClusterInstallInfo(imageSpec.ImageExtension.Labels, runtimeConfig.ContainerRuntimeConfig))
 	if err != nil {
 		return err

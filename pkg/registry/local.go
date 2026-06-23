@@ -36,9 +36,9 @@ import (
 	osutils "github.com/sealerio/sealer/utils/os"
 	"github.com/sealerio/sealer/utils/shellcommand"
 
-	"github.com/containers/common/pkg/auth"
 	"github.com/pelletier/go-toml"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/pkg/auth"
 	"golang.org/x/sync/errgroup"
 	k8snet "k8s.io/utils/net"
 )

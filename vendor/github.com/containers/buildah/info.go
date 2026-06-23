@@ -9,20 +9,21 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containerd/containerd/platforms"
+	internalUtil "github.com/containers/buildah/internal/util"
 	putil "github.com/containers/buildah/pkg/util"
 	"github.com/containers/buildah/util"
-	"github.com/containers/storage"
-	"github.com/containers/storage/pkg/system"
-	"github.com/containers/storage/pkg/unshare"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/common/pkg/cgroups"
+	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/system"
+	"go.podman.io/storage/pkg/unshare"
 )
 
 // InfoData holds the info type, i.e store, host etc and the data for each type
 type InfoData struct {
 	Type string
-	Data map[string]interface{}
+	Data map[string]any
 }
 
 // Info returns the store and host information
@@ -41,16 +42,16 @@ func Info(store storage.Store) ([]InfoData, error) {
 	return info, nil
 }
 
-func hostInfo() map[string]interface{} {
-	info := map[string]interface{}{}
-	ps := platforms.Normalize(v1.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH})
+func hostInfo() map[string]any {
+	info := map[string]any{}
+	ps := internalUtil.NormalizePlatform(v1.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH})
 	info["os"] = ps.OS
 	info["arch"] = ps.Architecture
 	info["variant"] = ps.Variant
 	info["cpus"] = runtime.NumCPU()
 	info["rootless"] = unshare.IsRootless()
 
-	unified, err := util.IsCgroup2UnifiedMode()
+	unified, err := cgroups.IsCgroup2UnifiedMode()
 	if err != nil {
 		logrus.Error(err, "err reading cgroups mode")
 	}
@@ -76,7 +77,7 @@ func hostInfo() map[string]interface{} {
 		info["SwapFree"] = mi.SwapFree
 	}
 	hostDistributionInfo := getHostDistributionInfo()
-	info["Distribution"] = map[string]interface{}{
+	info["Distribution"] = map[string]any{
 		"distribution": hostDistributionInfo["Distribution"],
 		"version":      hostDistributionInfo["Version"],
 	}
@@ -127,11 +128,13 @@ func hostInfo() map[string]interface{} {
 }
 
 // top-level "store" info
-func storeInfo(store storage.Store) (map[string]interface{}, error) {
+func storeInfo(store storage.Store) (map[string]any, error) {
 	// lets say storage driver in use, number of images, number of containers
-	info := map[string]interface{}{}
+	info := map[string]any{}
 	info["GraphRoot"] = store.GraphRoot()
 	info["RunRoot"] = store.RunRoot()
+	info["GraphImageStore"] = store.ImageStore()
+	info["GraphTransientStore"] = store.TransientStore()
 	info["GraphDriverName"] = store.GraphDriverName()
 	info["GraphOptions"] = store.GraphOptions()
 	statusPairs, err := store.Status()
@@ -143,11 +146,12 @@ func storeInfo(store storage.Store) (map[string]interface{}, error) {
 		status[pair[0]] = pair[1]
 	}
 	info["GraphStatus"] = status
+
 	images, err := store.Images()
 	if err != nil {
 		logrus.Error(err, "error getting number of images")
 	}
-	info["ImageStore"] = map[string]interface{}{
+	info["ImageStore"] = map[string]any{
 		"number": len(images),
 	}
 
@@ -155,7 +159,7 @@ func storeInfo(store storage.Store) (map[string]interface{}, error) {
 	if err != nil {
 		logrus.Error(err, "error getting number of containers")
 	}
-	info["ContainerStore"] = map[string]interface{}{
+	info["ContainerStore"] = map[string]any{
 		"number": len(containers),
 	}
 
@@ -179,11 +183,11 @@ func getHostDistributionInfo() map[string]string {
 
 	l := bufio.NewScanner(f)
 	for l.Scan() {
-		if strings.HasPrefix(l.Text(), "ID=") {
-			dist["Distribution"] = strings.TrimPrefix(l.Text(), "ID=")
+		if after, ok := strings.CutPrefix(l.Text(), "ID="); ok {
+			dist["Distribution"] = after
 		}
-		if strings.HasPrefix(l.Text(), "VERSION_ID=") {
-			dist["Version"] = strings.Trim(strings.TrimPrefix(l.Text(), "VERSION_ID="), "\"")
+		if after, ok := strings.CutPrefix(l.Text(), "VERSION_ID="); ok {
+			dist["Version"] = strings.Trim(after, "\"")
 		}
 	}
 	return dist
