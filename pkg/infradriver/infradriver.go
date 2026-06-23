@@ -70,8 +70,7 @@ type InfraDriver interface {
 	Execute(hosts []net.IP, f func(host net.IP) error) error
 
 	// Copy local files to remote host
-	// scp -r /tmp root@192.168.0.2:/root/tmp => Copy("192.168.0.2","tmp","/root/tmp")
-	// need check md5sum
+	// Copy tries rsync delta synchronization first and falls back to sftp copy with md5 validation.
 	Copy(host net.IP, localFilePath, remoteFilePath string) error
 	// CopyR copy remote host files to localhost
 	CopyR(host net.IP, remoteFilePath, localFilePath string) error

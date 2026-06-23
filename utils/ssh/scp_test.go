@@ -14,6 +14,78 @@
 
 package ssh
 
+import (
+	"net"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestRsyncRemoteTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		ssh        SSH
+		host       net.IP
+		remotePath string
+		want       string
+	}{
+		{
+			name:       "ipv4 with user",
+			ssh:        SSH{User: "root"},
+			host:       net.ParseIP("192.168.0.2"),
+			remotePath: "/var/lib/sealer/rootfs/",
+			want:       "root@192.168.0.2:'/var/lib/sealer/rootfs/'",
+		},
+		{
+			name:       "ipv6 with user",
+			ssh:        SSH{User: "root"},
+			host:       net.ParseIP("2001:db8::1"),
+			remotePath: "/var/lib/sealer/rootfs/",
+			want:       "root@[2001:db8::1]:'/var/lib/sealer/rootfs/'",
+		},
+		{
+			name:       "without user",
+			ssh:        SSH{},
+			host:       net.ParseIP("192.168.0.2"),
+			remotePath: "/tmp/file",
+			want:       "192.168.0.2:'/tmp/file'",
+		},
+		{
+			name:       "quoted remote path",
+			ssh:        SSH{User: "root"},
+			host:       net.ParseIP("192.168.0.2"),
+			remotePath: "/tmp/it's here/file",
+			want:       "root@192.168.0.2:'/tmp/it'\\''s here/file'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.ssh.rsyncRemoteTarget(tt.host, tt.remotePath))
+		})
+	}
+}
+
+func TestRsyncSSHCommand(t *testing.T) {
+	t.Run("default port", func(t *testing.T) {
+		cmd := (&SSH{}).rsyncSSHCommand()
+		assert.Contains(t, cmd, "'ssh'")
+		assert.Contains(t, cmd, "'-p' '22'")
+		assert.Contains(t, cmd, "'BatchMode=yes'")
+	})
+
+	t.Run("custom port and private key", func(t *testing.T) {
+		cmd := (&SSH{Port: "2222", PkFile: "/tmp/key with space"}).rsyncSSHCommand()
+		assert.Contains(t, cmd, "'-p' '2222'")
+		assert.Contains(t, cmd, "'-i' '/tmp/key with space'")
+	})
+}
+
+func TestPathWithTrailingSeparator(t *testing.T) {
+	assert.Equal(t, "/tmp/source/", pathWithTrailingSeparator("/tmp/source"))
+	assert.Equal(t, "/tmp/source/", pathWithTrailingSeparator("/tmp/source/"))
+}
+
 /*
 func TestSSHCopyLocalToRemote(t *testing.T) {
 	type args struct {

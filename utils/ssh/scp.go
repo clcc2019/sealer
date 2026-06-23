@@ -15,16 +15,19 @@
 package ssh
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/pkg/sftp"
+	"github.com/sealerio/sealer/common"
 	utilsnet "github.com/sealerio/sealer/utils/net"
 	osi "github.com/sealerio/sealer/utils/os"
 	progressbar "github.com/sealerio/sealer/utils/progressbar"
@@ -33,6 +36,7 @@ import (
 
 const (
 	Md5sumCmd = "md5sum %s | cut -d\" \" -f1"
+	rsyncCmd  = "rsync"
 )
 
 var (
@@ -112,6 +116,12 @@ func (s *SSH) Copy(host net.IP, localPath, remotePath string) error {
 	}
 	logrus.Debugf("remote copy files src %s to dst [%s]:%s", localPath, host, remotePath)
 
+	if err := s.copyWithRsync(host, localPath, remotePath); err == nil {
+		return nil
+	} else {
+		logrus.Debugf("failed to copy files src %s to dst [%s]:%s with rsync, fallback to sftp: %v", localPath, host, remotePath, err)
+	}
+
 	sftpClient, err := s.sftpConnect(host)
 	if err != nil {
 		return fmt.Errorf("failed to new sftp client of host(%s): %s", host, err)
@@ -156,6 +166,130 @@ func (s *SSH) Copy(host net.IP, localPath, remotePath string) error {
 		epu.Increment()
 	}
 	return nil
+}
+
+func (s *SSH) copyWithRsync(host net.IP, localPath, remotePath string) error {
+	if err := s.checkRsyncPrerequisites(host); err != nil {
+		return err
+	}
+
+	f, err := s.Fs.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to get file stat of path(%s): %s", localPath, err)
+	}
+
+	srcPath := localPath
+	dstPath := remotePath
+	mkdirPath := filepath.Dir(remotePath)
+	if f.IsDir() {
+		srcPath = pathWithTrailingSeparator(filepath.Clean(localPath))
+		dstPath = pathWithTrailingSeparator(remotePath)
+		mkdirPath = remotePath
+	}
+
+	if err := s.CmdAsync(host, nil, fmt.Sprintf("mkdir -p %s", shellQuote(mkdirPath))); err != nil {
+		return fmt.Errorf("failed to create remote path %s on host %s: %v", mkdirPath, host, err)
+	}
+
+	args := []string{
+		"-a",
+		"--checksum",
+		"--no-owner",
+		"--no-group",
+		"-e",
+		s.rsyncSSHCommand(),
+		srcPath,
+		s.rsyncRemoteTarget(host, dstPath),
+	}
+	if s.User != common.ROOT {
+		args = append([]string{"--rsync-path=sudo rsync"}, args...)
+	}
+
+	logrus.Debugf("remote rsync files src %s to dst [%s]:%s", localPath, host, remotePath)
+
+	cmd := exec.Command(rsyncCmd, args...) // #nosec G204
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		output := strings.TrimSpace(stdout.String() + stderr.String())
+		if output != "" {
+			return fmt.Errorf("rsync failed: %v: %s", err, output)
+		}
+		return fmt.Errorf("rsync failed: %v", err)
+	}
+
+	return nil
+}
+
+func (s *SSH) checkRsyncPrerequisites(host net.IP) error {
+	if _, err := exec.LookPath(rsyncCmd); err != nil {
+		return fmt.Errorf("local rsync command not found: %v", err)
+	}
+
+	if s.Password != "" && s.PkFile == "" {
+		return fmt.Errorf("rsync over ssh is skipped for password-only authentication")
+	}
+
+	if err := s.CmdAsync(host, nil, "command -v rsync >/dev/null 2>&1"); err != nil {
+		return fmt.Errorf("remote rsync command not available on host %s: %v", host, err)
+	}
+
+	return nil
+}
+
+func (s *SSH) rsyncSSHCommand() string {
+	port := s.Port
+	if port == "" {
+		port = DefaultSSHPort
+	}
+
+	args := []string{
+		"ssh",
+		"-p", port,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"-o", "BatchMode=yes",
+	}
+	if s.PkFile != "" {
+		args = append(args, "-i", s.PkFile)
+	}
+
+	for i, arg := range args {
+		args[i] = shellQuote(arg)
+	}
+	return strings.Join(args, " ")
+}
+
+func (s *SSH) rsyncRemoteTarget(host net.IP, remotePath string) string {
+	userPrefix := ""
+	if s.User != "" {
+		userPrefix = s.User + "@"
+	}
+	return fmt.Sprintf("%s%s:%s", userPrefix, rsyncHost(host), shellQuote(remotePath))
+}
+
+func rsyncHost(host net.IP) string {
+	hostString := host.String()
+	if strings.Contains(hostString, ":") {
+		return "[" + hostString + "]"
+	}
+	return hostString
+}
+
+func pathWithTrailingSeparator(p string) string {
+	if strings.HasSuffix(p, string(os.PathSeparator)) {
+		return p
+	}
+	return p + string(os.PathSeparator)
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func (s *SSH) remoteMd5Sum(host net.IP, remoteFilePath string) string {
