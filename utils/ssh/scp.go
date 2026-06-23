@@ -16,6 +16,9 @@ package ssh
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -32,11 +35,13 @@ import (
 	osi "github.com/sealerio/sealer/utils/os"
 	progressbar "github.com/sealerio/sealer/utils/progressbar"
 	"github.com/sirupsen/logrus"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 const (
-	Md5sumCmd = "md5sum %s | cut -d\" \" -f1"
-	rsyncCmd  = "rsync"
+	Md5sumCmd        = "md5sum %s | cut -d\" \" -f1"
+	rsyncCmd         = "rsync"
+	defaultRSAKeyBit = 2048
 )
 
 var (
@@ -227,8 +232,8 @@ func (s *SSH) checkRsyncPrerequisites(host net.IP) error {
 		return fmt.Errorf("local rsync command not found: %v", err)
 	}
 
-	if s.Password != "" && s.PkFile == "" {
-		return fmt.Errorf("rsync over ssh is skipped for password-only authentication")
+	if err := s.establishPasswordlessAuthentication(host); err != nil {
+		return err
 	}
 
 	if err := s.CmdAsync(host, nil, "command -v rsync >/dev/null 2>&1"); err != nil {
@@ -236,6 +241,127 @@ func (s *SSH) checkRsyncPrerequisites(host net.IP) error {
 	}
 
 	return nil
+}
+
+func (s *SSH) establishPasswordlessAuthentication(host net.IP) error {
+	if s.Password == "" {
+		return nil
+	}
+	if s.PkFile == "" {
+		s.PkFile = filepath.Join(common.GetHomeDir(), ".ssh", "id_rsa")
+	}
+
+	publicKey, err := s.ensureLocalPublicKey()
+	if err != nil {
+		return fmt.Errorf("failed to prepare local ssh public key: %v", err)
+	}
+
+	if err := s.installAuthorizedKey(host, publicKey); err != nil {
+		return fmt.Errorf("failed to install ssh public key on host %s: %v", host, err)
+	}
+
+	return nil
+}
+
+func (s *SSH) ensureLocalPublicKey() ([]byte, error) {
+	publicKeyPath := s.PkFile + ".pub"
+	if publicKey, err := os.ReadFile(filepath.Clean(publicKeyPath)); err == nil && strings.TrimSpace(string(publicKey)) != "" {
+		return []byte(strings.TrimSpace(string(publicKey))), nil
+	}
+
+	if !fileExist(s.PkFile) {
+		return s.generateLocalKeyPair(publicKeyPath)
+	}
+
+	privateKey, err := os.ReadFile(filepath.Clean(s.PkFile))
+	if err != nil {
+		return nil, err
+	}
+
+	var signer cryptossh.Signer
+	if s.PkPassword == "" {
+		signer, err = cryptossh.ParsePrivateKey(privateKey)
+	} else {
+		signer, err = cryptossh.ParsePrivateKeyWithPassphrase(privateKey, []byte(s.PkPassword))
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey := cryptossh.MarshalAuthorizedKey(signer.PublicKey())
+	if err := os.WriteFile(filepath.Clean(publicKeyPath), publicKey, 0644); err != nil {
+		return nil, err
+	}
+
+	return []byte(strings.TrimSpace(string(publicKey))), nil
+}
+
+func (s *SSH) generateLocalKeyPair(publicKeyPath string) ([]byte, error) {
+	if err := os.MkdirAll(filepath.Dir(s.PkFile), 0700); err != nil {
+		return nil, err
+	}
+
+	key, err := rsa.GenerateKey(rand.Reader, defaultRSAKeyBit)
+	if err != nil {
+		return nil, err
+	}
+	if err := key.Validate(); err != nil {
+		return nil, err
+	}
+	key.Precompute()
+
+	privateKeyBlock, err := cryptossh.MarshalPrivateKey(key, "")
+	if err != nil {
+		return nil, err
+	}
+	privateKey := pem.EncodeToMemory(privateKeyBlock)
+	if err := os.WriteFile(filepath.Clean(s.PkFile), privateKey, 0600); err != nil {
+		return nil, err
+	}
+	s.PkPassword = ""
+
+	publicKey, err := cryptossh.NewPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	authorizedKey := cryptossh.MarshalAuthorizedKey(publicKey)
+	if err := os.WriteFile(filepath.Clean(publicKeyPath), authorizedKey, 0644); err != nil {
+		return nil, err
+	}
+
+	logrus.Debugf("generated local ssh key pair for rsync: %s", s.PkFile)
+	return []byte(strings.TrimSpace(string(authorizedKey))), nil
+}
+
+func (s *SSH) installAuthorizedKey(host net.IP, publicKey []byte) error {
+	client, err := s.connect(host)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	var stderr bytes.Buffer
+	session.Stderr = &stderr
+	if err := session.Run(authorizedKeyInstallCommand(string(publicKey))); err != nil {
+		output := strings.TrimSpace(stderr.String())
+		if output != "" {
+			return fmt.Errorf("%v: %s", err, output)
+		}
+		return err
+	}
+
+	return nil
+}
+
+func authorizedKeyInstallCommand(publicKey string) string {
+	key := shellQuote(strings.TrimSpace(publicKey))
+	return fmt.Sprintf("umask 077 && mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && { grep -qxF %s \"$HOME/.ssh/authorized_keys\" || printf '%%s\\n' %s >> \"$HOME/.ssh/authorized_keys\"; } && chmod 700 \"$HOME/.ssh\" && chmod 600 \"$HOME/.ssh/authorized_keys\"", key, key)
 }
 
 func (s *SSH) rsyncSSHCommand() string {

@@ -16,9 +16,12 @@ package ssh
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 func TestRsyncRemoteTarget(t *testing.T) {
@@ -84,6 +87,44 @@ func TestRsyncSSHCommand(t *testing.T) {
 func TestPathWithTrailingSeparator(t *testing.T) {
 	assert.Equal(t, "/tmp/source/", pathWithTrailingSeparator("/tmp/source"))
 	assert.Equal(t, "/tmp/source/", pathWithTrailingSeparator("/tmp/source/"))
+}
+
+func TestEnsureLocalPublicKeyGeneratesKeyPair(t *testing.T) {
+	privateKeyPath := filepath.Join(t.TempDir(), "id_rsa")
+	sshClient := &SSH{PkFile: privateKeyPath}
+
+	publicKey, err := sshClient.ensureLocalPublicKey()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, publicKey)
+
+	privateKeyData, err := os.ReadFile(privateKeyPath)
+	if assert.NoError(t, err) {
+		_, err = cryptossh.ParsePrivateKey(privateKeyData)
+		assert.NoError(t, err)
+	}
+
+	_, _, _, _, err = cryptossh.ParseAuthorizedKey(publicKey)
+	assert.NoError(t, err)
+
+	privateKeyStat, err := os.Stat(privateKeyPath)
+	if assert.NoError(t, err) {
+		assert.Equal(t, os.FileMode(0600), privateKeyStat.Mode().Perm())
+	}
+
+	publicKeyStat, err := os.Stat(privateKeyPath + ".pub")
+	if assert.NoError(t, err) {
+		assert.Equal(t, os.FileMode(0644), publicKeyStat.Mode().Perm())
+	}
+}
+
+func TestAuthorizedKeyInstallCommand(t *testing.T) {
+	publicKey := "ssh-rsa AAAATEST user'with-quote"
+
+	cmd := authorizedKeyInstallCommand(publicKey)
+
+	assert.Contains(t, cmd, "mkdir -p \"$HOME/.ssh\"")
+	assert.Contains(t, cmd, "{ grep -qxF 'ssh-rsa AAAATEST user'\\''with-quote' \"$HOME/.ssh/authorized_keys\" || printf '%s\\n' 'ssh-rsa AAAATEST user'\\''with-quote' >> \"$HOME/.ssh/authorized_keys\"; }")
+	assert.Contains(t, cmd, "chmod 600 \"$HOME/.ssh/authorized_keys\"")
 }
 
 /*
